@@ -1,0 +1,9 @@
+[workspace]
+members = ["fwlk", "firmware-log-keeper"]
+resolver = "2"
+
+[profile.release]
+panic = "abort"
+lto = true
+codegen-units = 1
+strip = true

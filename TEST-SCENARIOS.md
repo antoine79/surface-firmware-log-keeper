@@ -1,0 +1,124 @@
+# Test scenarios (draft for review, 21 Nov 2026)
+
+Vocabulary: a firmware run is one execution of the firmware from reset to hand-over (or hang); see SPEC.md.
+
+Each scenario is a sequence of simulated boots on scratch directories: fake firmware memory, fake `UefiLogs` folder, fake error-record variables. The keeper runs once per simulated Linux boot. Every scenario also checks the standing rules at the end (section H).
+
+## A. One boot, one or both sources
+
+- A1. Memory only (no `UefiLogs` folder): one boot folder, every row `memory`.
+- A2. Both copies identical: every row `both`.
+- A3. Memory has extra lines after the hand-over: those rows are `memory`, at the end.
+- A4. One line differs between the copies: not every line of the file is in the memory log, so the file is another run, with its own `fileonly-` folder (every row `bootefi`), and the boot's folder holds its memory lines only (every row `memory`). No warning: the keeper does not judge.
+- A5. A memory entry spanning several lines: each line paired with the file's lines.
+- A6. Row key: several lines in the same millisecond, lines with an empty message, and lines identical in time and text (occurrence 1, 2, 3): memory has such a line three times and the file twice gives two `both` rows and one `memory` row. Only spaces, tabs, CR and LF are removed at the end of a message: a form feed or a non-breaking space stays.
+- A12. A memory dump with an entry the decoder does not know: the other lines are merged, the dump is copied raw into the run folder before staging is emptied, and the run reports the bytes not decoded.
+- A7. File only, for a boot that never reached Linux: a `fileonly-` folder with every row `bootefi`. Nothing is flagged by the keeper.
+- A9. Segment safeguard: a source whose uptime goes backwards starts segment 1; rows sort by segment first, so two runs in one log are never interleaved.
+- A10. Every row has a firmware-clock time: from the memory header for a run with a memory log, derived from `END_OF_LOG` for a file-only run, `-` when the file has no `END_OF_LOG`. With a clock tick between two milliseconds, the reset time is still the first memory row's time minus its uptime, and an error record's uptime is counted from it.
+- A11. File log with the tags of newer Project Mu firmware (phase and level, or level only): paired with the memory log without the tags, every row `both` with the memory copy's text; a file-only run keeps every text as it is. A line without level tag whose text begins like one loses that beginning too: its file is then another run.
+- A8. Sort order: rows are sorted by segment, time since reset, then source, then line number (a `both` row, error records and a `memory` row at the same uptime); running the merge twice on the same inputs gives a byte-identical file; every row carries its line number in its source.
+
+## B. Several boots
+
+- B1. Linux boot, then a boot that hangs after the firmware, then a Linux boot: three folders; the middle one file-only.
+- B2. The same 9 unrotated files seen at 9 runs in a row: each archived once, no new folder; `seen.tsv` gains one line per file per run.
+- B3. Rotation: a slot overwritten by a new boot; the old content stays archived, the new one is added.
+- B4. Two files whose every line is in the current memory log: one folder, the longer file merged, both listed in its sources. If they are as long, the lowest content hash is merged. A file whose every line is in two memory logs of one keeper run goes to the lowest boot id, as an extra copy there if that boot has its own file: the first keeper run and a second one give the same archive.
+- B5. Two different boots whose first lines happen to be identical: told apart by the rest of their content, two folders.
+- B5b. A file from another boot whose power-on time is close to the current boot's: still a separate boot (the clock never joins two sources).
+- B5c. Two boots sharing 80 % of their lines, the older one known by its file only: two runs, because not every line of the file is in the other boot's memory log. With or without `END_OF_LOG`, the result is the same.
+- B6. The keeper run twice in the same boot: nothing new the second time. If the second run reads a shorter memory log, every earlier row stays and nothing is reported; a memory log with other lines is kept in staging and reported, the archived log stays; a longer one (the firmware went on logging, an unfinished line now ended) replaces the first. A dump still in staging because its merge failed is protected the same way from a later read of the same boot.
+- B7. A long run of boots that never reached Linux (more than 9): the keeper archives what is there and records the firmware's index value in `seen.tsv`; the gap is found by the report program (K2), not by the keeper.
+
+## C. Damaged or unusual file logs
+
+- C1. Stale tail after `END_OF_LOG` (an older, longer log in the same slot): only the part before the first marker is merged; the tail is kept in the raw copy and reported.
+- C2. No `END_OF_LOG` (interrupted write): archived and merged, flagged as incomplete. A last line cut inside its time stamp is in no memory log: the file is another run.
+- C3. Padding with spaces, with NUL bytes, or both; Windows line endings.
+- C4. Empty file, or a file of only padding: ignored, reported.
+- C5. Unreadable or garbled lines: kept as they are, never stop the run; being in no memory log, they make their file a run of its own. A line ended by LF alone is a line. An `END_OF_LOG` clock outside the years 1 to 9999, or too early for the uptime of the last line, counts as no clock.
+
+## D. Error records
+
+- D1. New records: archived once by content, decoded in the boot folder, reported.
+- D2. Purge: each record whose archived copy matches byte for byte is deleted from the firmware; the store is empty afterwards.
+- D3. A record whose archive copy differs: kept in the firmware, reported.
+- D4. Never deleted: `HwErrRecSupport`, the logger's locator variable, a variable with a similar name but another identifier, any other variable.
+- D5. Removing the write protection (`chattr`) fails: deletion still attempted, failure reported if it fails. A variable that can only be deleted after `chattr -i <path>` has run is deleted.
+- D6. The same record seen again later (re-written by the firmware): not archived twice.
+- D7. A record that cannot be decoded: archived raw, reported, not deleted only if the raw archive cannot be verified.
+
+- D8. A record whose timestamp falls inside the current run's clock span: one row with source `errrec` in that run's log, at its time; listed in `sources.tsv`.
+- D9. A record inside an older archived run's span (found one boot later): added to that run's log, which is rewritten in order.
+- D10. A record inside no run (written by a run that hung in the firmware and left no log): one row in `unattached/firmware.log`. When its run is archived at a later keeper run, the row moves to that run's log.
+- D11. A record exactly on the first or last second of a run: attached (bounds included). A record one second outside: unattached. A record of the first second, before a reset time that has a millisecond part: attached with a negative uptime, first row. In a log with two segments the span goes from the earliest to the latest row time.
+- D12. A record is deleted from the firmware only after its row is verified in a log; the same record seen again is not added twice.
+- D13. Two runs whose clock spans overlap (clock set back between them): the record goes to the run with the latest first row. Two spans that start on the same millisecond: the greatest run key, compared as text.
+- D14. Two records with the same second and the same record id in one run: in hash order, whatever the order of their variables.
+- D15. A line of `hwerrrec/seen.tsv` that cannot be written: the record is archived and deleted all the same, the run reports the error and exits 1.
+
+## E. Safety of every delete
+
+- E1. The archive write fails (disk full, read-only `/var/log`): nothing is deleted anywhere, the run reports the error and exits 1.
+- E2. Crash between writing the merged log and purging: the next run finds the staging data, finishes the merge, then purges. A memory dump left under its temporary name is merged if it is whole, also beside an `advlog.bin` (the longer of the two is kept); a staging folder with nothing readable, or with a cut dump beside timings and versions, is kept and reported. A run folder left under its `.removing` name is deleted by the next run.
+- E3. The merged log is missing a line (forced): the check before purging fails, the staging data stays. The log that was there before (an older run's, or `unattached/`'s) is byte for byte unchanged, and the next run without the fault completes, also for a run folder left without a log whose file is no longer in `UefiLogs`. A log is never replaced by one that lacks an error-record row or a memory line it holds, even when `sources.tsv` no longer lists them. A log damaged from outside so that a memory row has lost its uptime stops only its own run: that run reports `error: merge:` and keeps its log, and the keeper run goes on with the other sources.
+- E4. Retention: oldest boot folders removed above the limits, never the newest, never the error-record archive. Oldest means collected first: a boot whose hardware clock reads an old date is still there after the run that collected it, and after the next boot. A run whose file log is still in `UefiLogs` is not removed, so no `fileonly-` folder ever appears for a boot that was archived. A `fileonly-` folder the same keeper run decided to keep is not removed either.
+- E5. Two of the three roots equal or one inside another, or a root that is the `UefiLogs` folder or the efivars folder, inside one or around one: the keeper stops with one error, nothing read or written.
+
+## F. Missing sources and errors
+
+- F1. No firmware memory log (no locator variable, or `/dev/mem` not readable): skipped with one message, the other sources processed. When the memory log is readable at a later run, the `fileonly-` folder goes into the boot's folder; it stays, with an error, while a record it held has no checked row elsewhere or while its `sources.tsv` cannot be read; one that could not be removed goes at a later boot, and one already merged goes even when its file has left `UefiLogs`.
+- F2. No `UefiLogs` folder, or no EFI partition mounted: skipped with one message. An unreadable `UEFI_Index.txt`: reported, the file logs archived with `-` as index, the other sources processed.
+- F3. No error records, no boot timings, no firmware versions: skipped quietly or with one message each.
+- F4. One step raises an error: the other steps still run, exit status 1.
+- F6. A boot id given with dashes or capitals names the same folders; one that is not 32 hex digits is an error, nothing written.
+- F5. A firmware stage of two hours with thousands of repeated lines: merged like any other, no warning from the keeper.
+
+## G. Migration from the current keeper (Python reference only)
+
+These tests are skipped when `FWLK_BIN` or `FWLK_PARITY_BIN` names another keeper.
+
+- G1. Legacy boot folders become merged boot folders with the same content; the error-record archive keeps its history. A record copy found only in a legacy boot folder is archived and gets its row. Retention afterwards removes the oldest legacy folder first, whatever the order of the boot ids.
+- G2. A legacy folder is removed only after its merged folder is verified; a forced verification failure keeps it.
+- G3. Legacy folders with only the decoded text (no raw buffer), or compressed files.
+- G4. Migration run twice: nothing duplicated.
+- G5. `migrate` on the merged root, on a folder inside it, on a folder that holds it, on another root or on the `UefiLogs` folder: one error, the archive byte for byte unchanged.
+- G6. `migrate` after a keeper run of the same boot: a shorter legacy dump changes nothing and its folder goes; a legacy dump with other lines is kept with an error, the archived log stays.
+- G7. A record of a legacy boot still in the firmware: the same logs whether the keeper or `migrate` runs first.
+
+## H. Standing rules, checked after every scenario
+
+- H1. The `UefiLogs` folder is byte-for-byte unchanged (hash of the whole tree before and after), and no access time of its files is updated.
+- H2. No variable other than archived `HwErrRec<nnnn>` records was deleted.
+- H3. Every line of every source appears in the merged log exactly once. A run with a memory log has `both`, `memory` and `errrec` rows only; a file-only run has `bootefi` and `errrec` rows only.
+- H4. No duplicate boot folders, no duplicate archive files.
+- H5. The staging folder is empty after a successful run.
+- H6. The keeper's output contains only what it did and what failed: no warning about the content of the logs.
+- H7. Python reference and Rust build write byte-identical archives, delete the same things and exit with the same status from the same inputs. Checked by the parity mode of the test harness: with `FWLK_PARITY_BIN` naming the second keeper, every keeper call of every scenario is made again by it on an exact copy of the scratch tree taken just before the call; exit status and every file of the tree (names and bytes, none missing on either side) must be identical, and standard output (with the copy's root path put back) identical line for line, except that in a line beginning `error: ` only `error: <step>:` is compared, and in a line beginning `usage: ` only that word.
+
+## I. Commands
+
+- I1. The shipped keeper has one command, a run; the Python reference also has `migrate`. Any other argument is a usage error (exit status 2, nothing read or written), and so is `migrate` for the shipped keeper or with an empty old root. Decoding and status belong to the report program (K).
+- I2. Without `FWLK_BOOT_ID` and `FWLK_NOW`: the kernel's boot id without dashes, the current time in UTC whatever the time zone. A variable that is set but empty counts as unset.
+
+## L. Plain rules where a language could decide (SPEC 2, 4, 5, 6)
+
+- L1. Numbers, white space, lines, the time format. A limit is ASCII digits only and below 2^63 (a control after it, a space or a plus sign before it, an underscore, another decimal digit, 2^63 or 45 digits: `error: keeper:`); 2^63 - 1 with leading zeros is a limit. A line count of `sources.tsv` that is not such a number stops its run with `error: merge:`. In `unattached/firmware.log`, an uptime that is not `-?digits.ddd` below 2^63 milliseconds, a segment followed by a control, a time without its three digits of milliseconds or with a digit that is not ASCII make the log invalid, and the record whose row it should hold stays in the firmware. A `.tsv` line ends at LF only and an empty line is skipped. White space is space, tab, CR and LF: around the boot id, at the ends of a timing, and in a printed line (a vertical tab or a no-break space is not). `FWLK_NOW` is exactly `YYYY-MM-DDTHH:MM:SSZ` (lower case letters, one digit fields, a space after it, a second 60 or another decimal digit are refused); a year below 1000 is written with four digits.
+- L2. Legacy files (migrate, Python reference only): a cut `.xz` file and an `advlog.txt` with seconds beyond any date keep their folder with `error: memory:`.
+- L3. Names and orders by bytes: staging folders are merged in the order of their names' bytes, one whose name is not UTF-8 included, and removed; a legacy record copy whose name is not UTF-8 is archived (Python reference); a setting that is not UTF-8 is refused with `error: keeper:`; a timing whose name is not UTF-8 makes `fpdt` fail; a folder whose time label has digits that are not ASCII is not a run folder and is left alone. A staging folder with only a compressed dump or only an `advlog.txt` is kept with `error: memory:` (E2).
+- L4. A folder removal removes the files before the subfolders, and the first failure stops it with `error: purge:`. A slot that is a folder is named in its error line. A root reached through a symbolic link to the merged root, or a folder not made yet under such a link, is the merged root.
+- L5. With standard output on a pipe nobody reads, a run does its work and exits as usual, and nothing goes to standard error; so does a usage error.
+- L6. Retention stops with `error: retention:` at a file it cannot size, and adds sizes beyond 64 bits (four sparse files of 2^62 bytes) without wrapping.
+
+## K. Report program (read-only, separate)
+
+- K1. Lists the firmware boots with their sources, line counts and firmware duration, from the archive alone.
+- K2. Rotation gap: detected from the index values in `seen.tsv` (B7's archive).
+- K3. Boots that never reached Linux listed; long firmware stages listed above a threshold given on the command line.
+- K4. Error records decoded, with when each was archived and deleted.
+- K5. The archive is byte-for-byte unchanged after any report command.
+
+## J. Real data (local only, never in the repository)
+
+- J1. On a copy of this laptop's snapshot: migrate, run, run again; every H rule holds; a boot known to have hung before Linux appears as file-only; every file log that pairs with no memory log inspected by hand.
