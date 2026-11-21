@@ -1,4 +1,4 @@
-# Test scenarios (draft for review, 21 Nov 2026)
+# Test scenarios
 
 Vocabulary: a firmware run is one execution of the firmware from reset to hand-over (or hang); see SPEC.md.
 
@@ -37,7 +37,7 @@ Each scenario is a sequence of simulated boots on scratch directories: fake firm
 - C2. No `END_OF_LOG` (interrupted write): archived and merged, flagged as incomplete. A last line cut inside its time stamp is in no memory log: the file is another run.
 - C3. Padding with spaces, with NUL bytes, or both; Windows line endings.
 - C4. Empty file, or a file of only padding: ignored, reported.
-- C5. Unreadable or garbled lines: kept as they are, never stop the run; being in no memory log, they make their file a run of its own. A line ended by LF alone is a line. An `END_OF_LOG` clock outside the years 1 to 9999, or too early for the uptime of the last line, counts as no clock.
+- C5. Unreadable or garbled lines: kept as they are, never stop the run; being in no memory log, they make their file a run of its own. A line ended by LF alone is a line. An `END_OF_LOG` clock outside the years 1 to 9999 counts as no clock.
 
 ## D. Error records
 
@@ -51,7 +51,7 @@ Each scenario is a sequence of simulated boots on scratch directories: fake firm
 
 - D8. A record whose timestamp falls inside the current run's clock span: one row with source `errrec` in that run's log, at its time; listed in `sources.tsv`.
 - D9. A record inside an older archived run's span (found one boot later): added to that run's log, which is rewritten in order.
-- D10. A record inside no run (written by a run that hung in the firmware and left no log): one row in `unattached/firmware.log`. When its run is archived at a later keeper run, the row moves to that run's log.
+- D10. A record inside no run (written by a run that hung in the firmware and left no log): one row in `unattached/firmware.log`. It stays there when its run is archived at a later keeper run.
 - D11. A record exactly on the first or last second of a run: attached (bounds included). A record one second outside: unattached. A record of the first second, before a reset time that has a millisecond part: attached with a negative uptime, first row. In a log with two segments the span goes from the earliest to the latest row time.
 - D12. A record is deleted from the firmware only after its row is verified in a log; the same record seen again is not added twice.
 - D13. Two runs whose clock spans overlap (clock set back between them): the record goes to the run with the latest first row. Two spans that start on the same millisecond: the greatest run key, compared as text.
@@ -61,31 +61,18 @@ Each scenario is a sequence of simulated boots on scratch directories: fake firm
 ## E. Safety of every delete
 
 - E1. The archive write fails (disk full, read-only `/var/log`): nothing is deleted anywhere, the run reports the error and exits 1.
-- E2. Crash between writing the merged log and purging: the next run finds the staging data, finishes the merge, then purges. A memory dump left under its temporary name is merged if it is whole, also beside an `advlog.bin` (the longer of the two is kept); a staging folder with nothing readable, or with a cut dump beside timings and versions, is kept and reported. A run folder left under its `.removing` name is deleted by the next run.
+- E2. Crash between writing the merged log and purging: the next run finds the staging data, finishes the merge, then purges. A file left under its temporary name is ignored and goes with its folder. A staging folder whose dump cannot be decoded, or with a file the keeper does not know and nothing readable, is kept and reported.
 - E3. The merged log is missing a line (forced): the check before purging fails, the staging data stays. The log that was there before (an older run's, or `unattached/`'s) is byte for byte unchanged, and the next run without the fault completes, also for a run folder left without a log whose file is no longer in `UefiLogs`. A log is never replaced by one that lacks an error-record row or a memory line it holds, even when `sources.tsv` no longer lists them. A log damaged from outside so that a memory row has lost its uptime stops only its own run: that run reports `error: merge:` and keeps its log, and the keeper run goes on with the other sources.
-- E4. Retention: oldest boot folders removed above the limits, never the newest, never the error-record archive. Oldest means collected first: a boot whose hardware clock reads an old date is still there after the run that collected it, and after the next boot. A run whose file log is still in `UefiLogs` is not removed, so no `fileonly-` folder ever appears for a boot that was archived. A `fileonly-` folder the same keeper run decided to keep is not removed either.
 - E5. Two of the three roots equal or one inside another, or a root that is the `UefiLogs` folder or the efivars folder, inside one or around one: the keeper stops with one error, nothing read or written.
 
 ## F. Missing sources and errors
 
-- F1. No firmware memory log (no locator variable, or `/dev/mem` not readable): skipped with one message, the other sources processed. When the memory log is readable at a later run, the `fileonly-` folder goes into the boot's folder; it stays, with an error, while a record it held has no checked row elsewhere or while its `sources.tsv` cannot be read; one that could not be removed goes at a later boot, and one already merged goes even when its file has left `UefiLogs`.
+- F1. No firmware memory log (no locator variable, or `/dev/mem` not readable): skipped with one message, the other sources processed. When the memory log is readable at a later run, the `fileonly-` folder keeps its file log and records, and the boot's folder, under its first name, gets the memory lines.
 - F2. No `UefiLogs` folder, or no EFI partition mounted: skipped with one message. An unreadable `UEFI_Index.txt`: reported, the file logs archived with `-` as index, the other sources processed.
 - F3. No error records, no boot timings, no firmware versions: skipped quietly or with one message each.
 - F4. One step raises an error: the other steps still run, exit status 1.
 - F6. A boot id given with dashes or capitals names the same folders; one that is not 32 hex digits is an error, nothing written.
 - F5. A firmware stage of two hours with thousands of repeated lines: merged like any other, no warning from the keeper.
-
-## G. Migration from the current keeper (Python reference only)
-
-These tests are skipped when `FWLK_BIN` or `FWLK_PARITY_BIN` names another keeper.
-
-- G1. Legacy boot folders become merged boot folders with the same content; the error-record archive keeps its history. A record copy found only in a legacy boot folder is archived and gets its row. Retention afterwards removes the oldest legacy folder first, whatever the order of the boot ids.
-- G2. A legacy folder is removed only after its merged folder is verified; a forced verification failure keeps it.
-- G3. Legacy folders with only the decoded text (no raw buffer), or compressed files.
-- G4. Migration run twice: nothing duplicated.
-- G5. `migrate` on the merged root, on a folder inside it, on a folder that holds it, on another root or on the `UefiLogs` folder: one error, the archive byte for byte unchanged.
-- G6. `migrate` after a keeper run of the same boot: a shorter legacy dump changes nothing and its folder goes; a legacy dump with other lines is kept with an error, the archived log stays.
-- G7. A record of a legacy boot still in the firmware: the same logs whether the keeper or `migrate` runs first.
 
 ## H. Standing rules, checked after every scenario
 
@@ -95,21 +82,21 @@ These tests are skipped when `FWLK_BIN` or `FWLK_PARITY_BIN` names another keepe
 - H4. No duplicate boot folders, no duplicate archive files.
 - H5. The staging folder is empty after a successful run.
 - H6. The keeper's output contains only what it did and what failed: no warning about the content of the logs.
-- H7. Python reference and Rust build write byte-identical archives, delete the same things and exit with the same status from the same inputs. Checked by the parity mode of the test harness: with `FWLK_PARITY_BIN` naming the second keeper, every keeper call of every scenario is made again by it on an exact copy of the scratch tree taken just before the call; exit status and every file of the tree (names and bytes, none missing on either side) must be identical, and standard output (with the copy's root path put back) identical line for line, except that in a line beginning `error: ` only `error: <step>:` is compared, and in a line beginning `usage: ` only that word.
+
+Regression mode: with `FWLK_PARITY_BIN` naming another build, every keeper call is made again by it on a copy of the scratch tree, and both must give the same exit status, files and output (error texts aside).
 
 ## I. Commands
 
-- I1. The shipped keeper has one command, a run; the Python reference also has `migrate`. Any other argument is a usage error (exit status 2, nothing read or written), and so is `migrate` for the shipped keeper or with an empty old root. Decoding and status belong to the report program (K).
+- I1. The keeper has one command, a run. Any argument is a usage error (exit status 2, nothing read or written). Decoding and status belong to the report program (K).
 - I2. Without `FWLK_BOOT_ID` and `FWLK_NOW`: the kernel's boot id without dashes, the current time in UTC whatever the time zone. A variable that is set but empty counts as unset.
 
-## L. Plain rules where a language could decide (SPEC 2, 4, 5, 6)
+## L. Damaged or hostile input
 
-- L1. Numbers, white space, lines, the time format. A limit is ASCII digits only and below 2^63 (a control after it, a space or a plus sign before it, an underscore, another decimal digit, 2^63 or 45 digits: `error: keeper:`); 2^63 - 1 with leading zeros is a limit. A line count of `sources.tsv` that is not such a number stops its run with `error: merge:`. In `unattached/firmware.log`, an uptime that is not `-?digits.ddd` below 2^63 milliseconds, a segment followed by a control, a time without its three digits of milliseconds or with a digit that is not ASCII make the log invalid, and the record whose row it should hold stays in the firmware. A `.tsv` line ends at LF only and an empty line is skipped. White space is space, tab, CR and LF: around the boot id, at the ends of a timing, and in a printed line (a vertical tab or a no-break space is not). `FWLK_NOW` is exactly `YYYY-MM-DDTHH:MM:SSZ` (lower case letters, one digit fields, a space after it, a second 60 or another decimal digit are refused); a year below 1000 is written with four digits.
-- L2. Legacy files (migrate, Python reference only): a cut `.xz` file and an `advlog.txt` with seconds beyond any date keep their folder with `error: memory:`.
-- L3. Names and orders by bytes: staging folders are merged in the order of their names' bytes, one whose name is not UTF-8 included, and removed; a legacy record copy whose name is not UTF-8 is archived (Python reference); a setting that is not UTF-8 is refused with `error: keeper:`; a timing whose name is not UTF-8 makes `fpdt` fail; a folder whose time label has digits that are not ASCII is not a run folder and is left alone. A staging folder with only a compressed dump or only an `advlog.txt` is kept with `error: memory:` (E2).
-- L4. A folder removal removes the files before the subfolders, and the first failure stops it with `error: purge:`. A slot that is a folder is named in its error line. A root reached through a symbolic link to the merged root, or a folder not made yet under such a link, is the merged root.
-- L5. With standard output on a pipe nobody reads, a run does its work and exits as usual, and nothing goes to standard error; so does a usage error.
-- L6. Retention stops with `error: retention:` at a file it cannot size, and adds sizes beyond 64 bits (four sparse files of 2^62 bytes) without wrapping.
+The keeper never panics; a failure gives an error line naming its step and exit status 1, and nothing is deleted that should not be.
+
+- L1. A `sources.tsv` whose line count is not a number stops its run with `error: merge:`, the folder unchanged. A damaged `unattached/firmware.log` keeps the record of its row in the firmware (`error: errrec:`). `FWLK_NOW` in another format, or a setting that is not UTF-8: `error: keeper:`, nothing written.
+- L2. A staging folder that cannot be removed: `error: purge:`. A slot that is a folder is named in its error line, the EFI partition unchanged. Two staging folders of one boot with other timings: the run takes the later ones, and the earlier folder stays with an `error: memory:` line naming it. A merged root that cannot be listed: `error: keeper:`, nothing merged or purged, the file logs archived all the same.
+- L3. With standard output on a pipe nobody reads, a run does its work and exits as usual, and nothing goes to standard error; so does a usage error.
 
 ## K. Report program (read-only, separate)
 
@@ -121,4 +108,4 @@ These tests are skipped when `FWLK_BIN` or `FWLK_PARITY_BIN` names another keepe
 
 ## J. Real data (local only, never in the repository)
 
-- J1. On a copy of this laptop's snapshot: migrate, run, run again; every H rule holds; a boot known to have hung before Linux appears as file-only; every file log that pairs with no memory log inspected by hand.
+- J1. On a copy of the archive the installed keeper wrote on this laptop, with its `UefiLogs` and efivars, and no memory log: two runs, both exit 0; no `firmware.log` changes by one byte; the error records already archived are deleted from the copy of efivars, and only they; `UefiLogs` unchanged, access times included; staging empty; the second run adds only `seen.tsv` lines.

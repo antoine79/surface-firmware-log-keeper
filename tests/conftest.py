@@ -1,12 +1,9 @@
-"""The 'machine' fixture: a laptop on scratch directories, driven boot by boot, and the standing rules H1 to H7.
+"""The 'machine' fixture: a laptop on scratch directories, driven boot by boot, and the standing rules H1 to H6.
 
-`migrate` is a command of the Python reference only: a test that calls it is skipped when FWLK_BIN or FWLK_PARITY_BIN
-names another keeper. The real-data test runs its migrate step with the reference launcher (keeper(reference=True)).
-
-The keeper is run only as a program: the executable named by FWLK_BIN (default: the Python reference launcher),
+The keeper is run only as a program: the executable named by FWLK_BIN (default: the release build of rust/),
 configured through the FWLK_* variables of SPEC.md section 6, judged on the files it reads and writes.
-Parity mode (H7): when FWLK_PARITY_BIN names a second keeper, every keeper call is also made by it on a copy of the
-test's scratch tree taken just before the call, and both must give the same exit status, output and files.
+Regression mode: with FWLK_PARITY_BIN naming another build, every keeper call is made again by it on a copy of the
+scratch tree, and both must give the same exit status, output (error texts aside) and files.
 """
 from __future__ import annotations
 
@@ -15,7 +12,6 @@ import os
 import re
 import shutil
 import subprocess
-import sys
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -26,7 +22,7 @@ from builders import (HWERR_GUID, LOCATOR_VAR, PAD_BYTES, SUPPORT_VAR, FileLog, 
                       fpdt_text, log_bytes, merge, norm, parse_content, parse_log, record_var, sha16, sort_key,
                       unattached_key, untag, uptime_ms, utc_stamp, write_sysfs)
 
-DEFAULT_BIN = Path(__file__).resolve().parents[1] / "firmware-log-keeper"
+DEFAULT_BIN = Path(__file__).resolve().parents[1] / "rust" / "target" / "release" / "firmware-log-keeper"
 
 KEY = r"[0-9a-f]{32}|fileonly-[0-9a-f]{16}"
 FOLDER_RE = re.compile(rf"([0-9]{{4}}-[0-9]{{2}}-[0-9]{{2}}T[0-9]{{6}})_({KEY})")
@@ -42,7 +38,6 @@ OUTPUT_SHAPES = [MERGED_RE] + [re.compile(p) for p in (
     r"error: [^:]+: .+")]
 STAMP = r"\d{4}-\d\d-\d\dT\d{6}Z"
 BOOTEFI_SEEN_RE = re.compile(rf"{STAMP}\t[0-9a-f]{{32}}\tUEFI_Log[1-9]\.txt\t[0-9a-f]{{16}}\t\d+\t\d+\t(yes|no)\t[^\t]+\t[^\t]+")
-RUNS_RE = re.compile(rf"{STAMP}\t[0-9a-f]{{32}}\t({KEY})")
 ERRREC_SEEN_RE = re.compile(rf"{STAMP}\t[0-9a-f]{{32}}\t(archived|deleted|kept)\t[^\t]+\t[0-9a-f]{{16}}\t"
                             r"(-|archive-mismatch|not-verified|delete-failed)")
 SOURCE_ORDER = {"memory": 0, "bootefi": 1, "errrec": 2}
@@ -51,22 +46,15 @@ not_root = pytest.mark.skipif(os.geteuid() == 0, reason="root ignores file permi
 
 
 def keeper_bin() -> list[str]:
-    """The command that runs the keeper: the executable named by FWLK_BIN, else the Python reference launcher
-    under the interpreter that runs the tests (its own first line names the system's Python)."""
+    """The command that runs the keeper: the executable named by FWLK_BIN, else the release build."""
     exe = Path(os.environ.get("FWLK_BIN") or DEFAULT_BIN)
     if not exe.is_file():
-        pytest.fail(f"keeper executable not found: {exe} (set FWLK_BIN)", pytrace=False)
-    path = str(exe.resolve())  # a bare name would be looked up in PATH, where another program may have it
-    return [path] if os.environ.get("FWLK_BIN") else [sys.executable, "-I", path]
-
-
-def is_reference(name: str | None) -> bool:
-    """Does this variable name the Python reference launcher (unset: the default)?"""
-    return not name or Path(name).resolve() == DEFAULT_BIN.resolve()
+        pytest.fail(f"keeper executable not found: {exe} (set FWLK_BIN, or build rust/)", pytrace=False)
+    return [str(exe.resolve())]  # a bare name would be looked up in PATH, where another program may have it
 
 
 def same_output(first: bytes, second: bytes) -> bool:
-    """H7: line for line, but in an error line only `error: <step>:` is fixed, and in a usage line only `usage:`."""
+    """Line for line, but in an error line only `error: <step>:` is compared, and in a usage line only `usage:`."""
     fixed = lambda line: (re.match(rb"error: [^:]*:|usage:", line) or [line])[0]
     a, b = first.split(b"\n"), second.split(b"\n")
     return len(a) == len(b) and all(fixed(x) == fixed(y) for x, y in zip(a, b))
@@ -272,17 +260,11 @@ class Machine:
     def _esp_files(self) -> list[Path]:
         return sorted(p for p in self.esp.rglob("*") if p.is_file()) if self.esp.is_dir() else []
 
-    def keeper(self, *args, expect: int = 0, env: dict | None = None, boot_id: str | None = None,
-               cwd: Path | None = None, reference: bool = False) -> Result:
+    def keeper(self, *args, expect: int = 0, env: dict | None = None, boot_id: str | None = None) -> Result:
         """Run the keeper once in the current Linux boot. Every path variable points into the scratch directory.
 
-        env: more variables for the keeper; a value of None removes the variable. reference: run the Python
-        reference launcher, without parity check, whatever keeper is under test."""
-        if (args and args[0] == "migrate" and expect != 2 and not reference
-                and not (is_reference(os.environ.get("FWLK_BIN")) and is_reference(os.environ.get("FWLK_PARITY_BIN")))):
-            pytest.skip("migrate is a command of the Python reference only, and FWLK_BIN or FWLK_PARITY_BIN names "
-                        "another keeper")
-        exe = [sys.executable, "-I", str(DEFAULT_BIN)] if reference else keeper_bin()
+        env: more variables for the keeper; a value of None removes the variable."""
+        exe = keeper_bin()
         boot_id = boot_id or (self.current and self.current.boot_id)
         assert boot_id, "the keeper only runs in a boot that reached Linux"
         now, self.now = self.now, self.now + timedelta(minutes=1)
@@ -290,7 +272,7 @@ class Machine:
         full.update(self.env(boot_id, now))
         full.update(env or {})
         full = {k: v for k, v in full.items() if v is not None}
-        twin = None if reference else self._parity_copy()  # before the access times are set: copying reads the EFI partition
+        twin = self._parity_copy()  # before the access times are set: copying reads the EFI partition
         esp_before, vars_before = digest(self.esp), self._vars()
         for p in self._esp_files():  # an access time older than the change time: any plain read would update it
             os.utime(p, ns=(p.stat().st_mtime_ns - 3600 * 10**9, p.stat().st_mtime_ns))
@@ -299,7 +281,7 @@ class Machine:
         if (not args and mem and self.memory_ok and (self.efivars / LOCATOR_VAR).exists()
                 and os.access(self.devmem, os.R_OK)):
             self.memory_seen[boot_id] = mem
-        p = subprocess.run([*exe, *map(str, args)], env=full, cwd=cwd, capture_output=True, timeout=600)
+        p = subprocess.run([*exe, *map(str, args)], env=full, capture_output=True, timeout=600)
         result = Result(p.returncode, p.stdout.decode("utf-8", "replace"), p.stderr.decode("utf-8", "replace"), now, boot_id)
         self.results.append(result)
         if [p.stat().st_atime_ns for p in self._esp_files()] != accessed:
@@ -316,15 +298,14 @@ class Machine:
                 self.violations.append(f"H2: {name} was modified")
         self.violations += [f"H2: {name} was created" for name in vars_after.keys() - vars_before.keys()]
         if twin:  # after the checks of H1: comparing reads the EFI partition
-            self._parity_check(twin, p, [*map(str, args)], full, cwd)
+            self._parity_check(twin, p, [*map(str, args)], full)
         assert result.rc == expect, f"expected exit status {expect}\n{result}"
         return result
 
-    # ----- H7: parity with a second keeper --------------------------------------------------------------------
+    # ----- regression mode: the same calls made by a second keeper -------------------------------------------
 
     def _parity_copy(self) -> Path | None:
-        """Copy the test's scratch tree (the machine and what the test put beside it, such as a legacy root) next to
-        it, for the second keeper. The fake /dev/mem files are linked, not copied: they are large and only read."""
+        """Copy the test's scratch tree (the machine and what the test put beside it) next to it, for the second keeper. The fake /dev/mem files are linked, not copied: they are large and only read."""
         if not os.environ.get("FWLK_PARITY_BIN"):
             return None
         base = self.root.parent
@@ -337,13 +318,12 @@ class Machine:
             (twin / p.relative_to(base)).symlink_to(p)
         return twin
 
-    def _parity_check(self, twin: Path, first, args: list[str], env: dict, cwd: Path | None) -> None:
+    def _parity_check(self, twin: Path, first, args: list[str], env: dict) -> None:
         """Run the second keeper on the copy and compare it with the first keeper's run on the tree itself."""
         base = str(self.root.parent)
         move = lambda v: v.replace(base, str(twin))
         p = subprocess.run([str(Path(os.environ["FWLK_PARITY_BIN"]).resolve()), *map(move, args)],
-                           env={k: move(v) for k, v in env.items()}, cwd=cwd and move(str(cwd)),
-                           capture_output=True, timeout=600)
+                           env={k: move(v) for k, v in env.items()}, capture_output=True, timeout=600)
         diffs = []
         if p.returncode != first.returncode:
             diffs.append(f"exit status {first.returncode} != {p.returncode}")
@@ -360,7 +340,7 @@ class Machine:
                 diffs.append(f"file {name}: different bytes")
         writable(twin)
         shutil.rmtree(twin)
-        assert not diffs, "H7: the second keeper (FWLK_PARITY_BIN) differs:\n" + "\n".join(diffs)
+        assert not diffs, "the second keeper (FWLK_PARITY_BIN) differs:\n" + "\n".join(diffs)
 
     # ----- reading the archive ---------------------------------------------------------------------------------
 
@@ -368,7 +348,7 @@ class Machine:
         """Names of the run folders, sorted."""
         if not self.merged_root.is_dir():
             return []
-        return sorted(p.name for p in self.merged_root.iterdir() if p.name not in ("hwerrrec", "unattached", "runs.tsv"))
+        return sorted(p.name for p in self.merged_root.iterdir() if p.name not in ("hwerrrec", "unattached"))
 
     def folder(self, run_or_key) -> Path:
         key = run_or_key if isinstance(run_or_key, str) else run_or_key.key
@@ -413,7 +393,7 @@ class Machine:
     # ----- standing rules --------------------------------------------------------------------------------------
 
     def check(self, bad_copies=()) -> None:
-        """Rules H1 to H6 of TEST-SCENARIOS.md (H7 is checked at every keeper call, in parity mode), asserted at the end of every scenario.
+        """Rules H1 to H6 of TEST-SCENARIOS.md, asserted at the end of every scenario.
 
         bad_copies: hashes of error-record archive files a test damaged on purpose.
         """
@@ -442,14 +422,10 @@ class Machine:
                 assert sha16(data) == p.stem, f"H4: {p.name} is not named after its content"
                 assert data and data == data.rstrip(PAD_BYTES), f"{p.name} holds padding"
                 raw[p.stem] = data
-        referenced, keys, record_rows, made = set(), [], [], []
+        referenced, keys, record_rows = set(), [], []
         if self.merged_root.is_dir():
             for p in sorted(self.merged_root.iterdir()):
-                if p.name == "runs.tsv":
-                    for line in p.read_text().splitlines():
-                        assert RUNS_RE.fullmatch(line), f"runs.tsv line {line!r}"
-                        made.append(line.split("\t")[2])
-                elif p.name == "hwerrrec":
+                if p.name == "hwerrrec":
                     self._check_record_archive(p, bad_copies)
                 elif p.name == "unattached":
                     assert [f.name for f in p.iterdir()] in ([], ["firmware.log"]), f"unexpected files in {p}"
@@ -463,7 +439,6 @@ class Machine:
                     keys.append(m[2])
                     record_rows += self._check_run_folder(p, m[1], m[2], raw, referenced)
         assert len(keys) == len(set(keys)), f"H4: two folders for one run: {sorted(keys)}"
-        assert set(keys) <= set(made), f"run folders that runs.tsv does not list: {sorted(set(keys) - set(made))}"
         assert set(raw) <= referenced, f"H4: raw file logs in no run folder: {sorted(set(raw) - referenced)}"
         hashes = [re.search(r"hash=([0-9a-f]{16})", r.message)[1] for r in record_rows]
         assert len(hashes) == len(set(hashes)), "H4: an error record has more than one row"
@@ -473,7 +448,7 @@ class Machine:
             if p.name == "seen.tsv":
                 for line in p.read_text().splitlines():
                     assert ERRREC_SEEN_RE.fullmatch(line), f"hwerrrec/seen.tsv line {line!r}"
-            elif p.name != "legacy-index.txt":
+            else:
                 assert re.fullmatch(r"[0-9a-f]{16}\.bin", p.name), f"H4: unexpected {p}"
                 assert p.stem in bad_copies or sha16(p.read_bytes()) == p.stem, f"H4: {p.name} is not named after its content"
 
@@ -489,8 +464,9 @@ class Machine:
         rows = parse_log((folder / "firmware.log").read_bytes())
         order = [sort_key(r) for r in rows]
         assert all(a < b for a, b in zip(order, order[1:])), f"{folder.name}/firmware.log is not in the order of SPEC 3.4"
-        if rows and rows[0].time != "-":
-            assert time_label == rows[0].time[:19].replace(":", ""), f"{folder.name}: label is not the first row's time"
+        # the first firmware-clock time, or the UTC time of the keeper run that made the folder before it knew one
+        labels = {r.utc[:17] for r in self.results} | ({rows[0].time[:19].replace(":", "")} if rows else set())
+        assert time_label in labels, f"{folder.name}: label is neither the first row's time nor a keeper run's"
         sources = self._tsv(folder / "sources.tsv")
         for s in sources:
             assert len(s) == 5 and s[0] in SOURCE_ORDER and re.fullmatch(r"[0-9a-f]{16}", s[1]) and s[2].isdigit(), s

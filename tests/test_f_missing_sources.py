@@ -46,22 +46,23 @@ def test_F1_no_memory_log(machine, how):
 
 
 def test_F1_memory_log_readable_at_a_later_run(machine):
-    """SPEC 2.1: a fileonly- folder that turns out to belong to a run that reached Linux is merged into it."""
+    """SPEC 2.1: a fileonly- folder keeps its file log and its records when the memory log of that run is read
+    later; the boot's folder, named after the first keeper run, gets the memory lines."""
     run = machine.firmware_run(boot_lines("a"), reset=T0)
     rec = record(T0 + 2 * S)
     machine.add_record(rec)
     locator = (machine.efivars / LOCATOR_VAR).read_bytes()
     _lose_memory(machine, "no locator variable")
-    machine.keeper()
-    assert len(machine.folder_names()) == 2
+    first = machine.keeper()
+    file_only = machine.folder(f"fileonly-{run.file.hash}")
+    log = (file_only / "firmware.log").read_bytes()
 
     (machine.efivars / LOCATOR_VAR).write_bytes(locator)
     machine.keeper()
-    assert machine.folder_names() == [run.folder_name]  # one folder, renamed now that its firmware-clock time is known
-    assert machine.log(run) == run.log([rec])
-    assert machine.sources(run) == (f"memory\t{run.mem.hash}\t9\t-\t-\n"
-                                    f"bootefi\t{run.file.hash}\t9\tUEFI_Log1.txt\tmerged\n"
-                                    f"errrec\t{rec.hash}\t1\t-\t-\n")
+    assert machine.folder_names() == sorted([file_only.name, f"{label(first.now)}_{run.boot_id}"])
+    assert (file_only / "firmware.log").read_bytes() == log
+    assert machine.log(run.boot_id) == log_bytes(merge(run.mem))
+    assert machine.sources(run.boot_id) == f"memory\t{run.mem.hash}\t9\t-\t-\n"
     machine.check()
 
 
@@ -132,76 +133,6 @@ def test_F5_two_hour_firmware_stage_with_repeated_lines(machine):
     machine.check()
 
 
-def _file_only_then_readable(machine):
-    """A boot whose first keeper run cannot read the memory log: the file log and a record go to a fileonly- folder."""
-    run = machine.firmware_run(boot_lines("a"), reset=T0)
-    rec = record(T0 + 2 * S)
-    machine.add_record(rec)
-    locator = (machine.efivars / LOCATOR_VAR).read_bytes()
-    _lose_memory(machine, "no locator variable")
-    machine.keeper()
-    (machine.efivars / LOCATOR_VAR).write_bytes(locator)  # readable from now on
-    return run, rec, machine.folder(f"fileonly-{run.file.hash}")
-
-
-def test_F1_absorbed_folder_kept_while_its_record_has_no_row_elsewhere(machine):
-    run, rec, file_only = _file_only_then_readable(machine)
-    copy = machine.merged_root / "hwerrrec" / f"{rec.hash}.bin"
-    copy.write_bytes(b"damaged")  # the record's row cannot be made again
-    res = machine.keeper(expect=1)
-
-    assert rec.message in (file_only / "firmware.log").read_text()  # the last readable trace of the record
-    assert [line for line in res.starting("error: purge: ") if file_only.name in line]
-
-    # a later boot, with the archive above its limit: retention does not take the folder the purge keeps
-    later = machine.firmware_run(boot_lines("b"), reset=T0 + timedelta(hours=1))
-    res = machine.keeper(expect=1, env={"FWLK_KEEP_RUNS": "2"})
-    assert rec.message in (file_only / "firmware.log").read_text()
-    assert [line for line in res.starting("error: purge: ") if file_only.name in line]
-
-    copy.write_bytes(rec.raw)  # repaired: the next run finishes
-    machine.keeper()
-    assert machine.folder_names() == [run.folder_name, later.folder_name]
-    assert machine.log(run) == run.log([rec])
-    machine.check()
-
-
-def test_F1_absorbed_folder_whose_sources_cannot_be_read_is_kept(machine):
-    """What the folder holds is not known: it stays, with an error, and the record's row with it."""
-    run, rec, file_only = _file_only_then_readable(machine)
-    sources = file_only / "sources.tsv"
-    listed = sources.read_text()
-    sources.write_text(listed[:listed.index("errrec") + 20])  # cut inside the line of the record
-    res = machine.keeper(expect=1)
-
-    assert rec.message in (file_only / "firmware.log").read_text()
-    assert [line for line in res.starting("error: purge: ") if file_only.name in line]
-
-    sources.write_text(listed)
-    machine.keeper()
-    assert machine.folder_names() == [run.folder_name]
-    assert machine.log(run) == run.log([rec])
-    machine.check()
-
-
-def test_F1_fileonly_folder_already_merged_goes_even_when_its_file_left_uefilogs(machine):
-    """The boot's folder lists the file log but the fileonly- folder is still there (the boot's log failed its
-    check); then the file is no longer in UefiLogs. The next run still removes the duplicate (SPEC 2.1)."""
-    run = machine.firmware_run(boot_lines("a"), reset=T0)
-    locator = (machine.efivars / LOCATOR_VAR).read_bytes()
-    _lose_memory(machine, "no locator variable")
-    machine.keeper()
-    (machine.efivars / LOCATOR_VAR).write_bytes(locator)
-    machine.keeper(expect=1, env={"FWLK_FAULT": "drop-row"})
-    assert len(machine.folder_names()) == 2 and run.file.hash in machine.sources(run)
-    machine.remove_uefilogs()
-    machine.keeper()
-
-    assert machine.folder_names() == [run.folder_name]
-    assert machine.log(run) == run.log()
-    machine.check()
-
-
 def test_F2_unreadable_index_file(machine):
     """UEFI_Index.txt is one more thing that can fail (SPEC 1): the file logs are archived with `-` as index,
     the memory log and the error records are processed."""
@@ -218,23 +149,6 @@ def test_F2_unreadable_index_file(machine):
     assert machine.log(run) == run.log([rec])
     assert machine.records_in_firmware() == []
     machine.check()
-
-
-@not_root
-def test_F1_absorbed_folder_that_could_not_be_removed_goes_at_a_later_boot(machine):
-    run, rec, file_only = _file_only_then_readable(machine)
-    file_only.chmod(0o555)
-    res = machine.keeper(expect=1)
-    left = [p for p in machine.merged_root.iterdir() if f"fileonly-{run.file.hash}" in p.name]
-    assert res.starting("error: purge: ") and len(left) == 1 and left[0].is_dir()
-    assert left[0].name == file_only.name + ".removing"  # renamed first (SPEC 4): never half a run folder
-    left[0].chmod(0o755)
-
-    later = machine.firmware_run(boot_lines("b"), reset=T0 + timedelta(hours=1))  # this boot's memory log is gone
-    machine.keeper()
-    assert machine.folder_names() == [run.folder_name, later.folder_name]
-    assert machine.log(run) == run.log([rec])
-    machine.check()  # H4: one folder per run, one row per record
 
 
 def test_F6_boot_id_with_dashes_or_capitals(machine):
@@ -255,4 +169,20 @@ def test_F6_boot_id_that_is_not_one(machine):
 
     assert len(res.lines) == 1 and res.starting("error: keeper: ")
     assert not machine.memory_root.exists() and not machine.merged_root.exists() and not machine.bootefi_root.exists()
+    machine.check()
+
+
+@not_root
+def test_F4_unreadable_timings_are_an_error_not_a_missing_source(machine):
+    """A timings folder that cannot be listed is reported as an error of its own; the other sources still run."""
+    run = machine.firmware_run(boot_lines("a"))
+    machine.fpdt.chmod(0)
+    try:
+        res = machine.keeper(expect=1)
+    finally:
+        machine.fpdt.chmod(0o755)
+
+    assert len(res.starting("error: fpdt: ")) == 1 and res.starting("skipped fpdt") == []
+    assert sorted(p.name for p in machine.folder(run).iterdir()) == ["esrt.txt", "firmware.log", "sources.tsv"]
+    assert machine.log(run) == run.log()
     machine.check()

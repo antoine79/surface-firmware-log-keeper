@@ -1,7 +1,7 @@
 [package]
 name = "fwlk"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 description = "firmware-log-keeper: the keeper of SPEC.md sections 1 to 7, as a library"
 license = "MIT"
 

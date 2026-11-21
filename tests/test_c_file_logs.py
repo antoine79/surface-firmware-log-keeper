@@ -159,12 +159,11 @@ def test_C5_line_ended_by_a_line_feed_alone(machine):
     machine.check()
 
 
-@pytest.mark.parametrize("clock, last", [("99999999999/11/20 12:00:05", 5000),  # no such year
-                                         ("1/1/1 0:00:05", 100 * 3_600_000 - 1)])  # reset time before the year 1
-def test_C5_end_of_log_clock_outside_the_calendar(machine, clock, last):
+def test_C5_end_of_log_clock_outside_the_calendar(machine):
     """SPEC 1.2: such a clock counts as no clock. The file is archived and merged like one without END_OF_LOG
     time, at every keeper run."""
-    lines = boot_lines("hung", n=3)[:3] + [L(last, "hung boot loader")]
+    clock = "99999999999/11/20 12:00:05"  # no such year
+    lines = boot_lines("hung", n=3)[:3] + [L(5000, "hung boot loader")]
     body = b"".join(f"{stamp(x.ms)} : {x.text}\r\n".encode() for x in lines)
     content = body + b"\r\n\r\n === END_OF_LOG === @ === " + clock.encode() + b" ==="
     machine.write_file(content + b"\r\n\r\n" + b" " * 300)

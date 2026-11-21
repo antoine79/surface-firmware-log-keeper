@@ -1,7 +1,7 @@
 """Builders for the firmware-log-keeper test suite.
 
 Everything the firmware leaves behind is synthesised here from scratch: the Advanced Logger memory buffer, the
-UEFI_Log files, the error-record variables, the timings and versions trees, and the legacy archive layout. The file
+UEFI_Log files, the error-record variables, the timings and versions trees. The file
 also holds the expected result of a merge (SPEC.md section 3), written independently of any keeper, and the readers
 for the archive files.
 
@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import copy
 import hashlib
-import lzma
 import re
 import struct
 import uuid
@@ -92,7 +91,7 @@ def boot_lines(tag: str, n: int = 8) -> list[L]:
 
 
 # ---------------------------------------------------------------------------------------------------------------
-# Memory log (Advanced Logger buffer), in the layout legacy-firmware-log-keeper.py reads
+# Memory log (Advanced Logger buffer), in the layout of mu_plus AdvLoggerPkg/Include/AdvancedLoggerInternal.h
 
 
 @dataclass(frozen=True)
@@ -336,7 +335,7 @@ class FileLog:
 
 
 # ---------------------------------------------------------------------------------------------------------------
-# Error records (HwErrRec<nnnn> variables): 4 attribute bytes + a CPER record, as decode_cper of the legacy keeper reads
+# Error records (HwErrRec<nnnn> variables): 4 attribute bytes + a CPER record (UEFI specification, appendix N)
 
 
 @dataclass(frozen=True)
@@ -539,68 +538,6 @@ def fpdt_text(n: int) -> str:
 def esrt_text() -> str:
     return "".join(f"{entry} fw_class={c} fw_version={v} last_attempt_version={v} last_attempt_status=0\n"
                    for entry, (c, v) in sorted(ESRT.items()))
-
-
-# ---------------------------------------------------------------------------------------------------------------
-# Legacy archive layout (SPEC section 8), as legacy-firmware-log-keeper.py wrote it
-
-
-def legacy_text(mem: MemLog) -> str:
-    """advlog.txt of the legacy keeper for this memory log (same text as its advlog_text function)."""
-    buf, c = mem.buffer(), mem.clock
-    version, size = struct.unpack_from("<H", buf, 4)[0], struct.unpack_from("<I", buf, 28)[0]
-    out = [f"# Advanced Logger version {version}, header at 0x{mem.addr:x}, {len(buf) - HEADER_SIZE} bytes used of "
-           f"{size}, 0 bytes discarded, timer {mem.freq} Hz",
-           f"# firmware clock (local time) read at tick {mem.clock_tick}: {c.year}-{c.month:02d}-{c.day:02d} "
-           f"{c.hour:02d}:{c.minute:02d}:{c.second:02d}; columns: seconds since reset, firmware clock, debug level, text"]
-    t0 = c - timedelta(seconds=mem.clock_tick / mem.freq)
-
-    def emit(text, tick, level):
-        secs = tick / mem.freq
-        clock = (t0 + timedelta(seconds=secs)).strftime("%H:%M:%S.%f")[:-3]
-        out.append(f"{secs:9.3f} {clock} L{level:08x} {text.rstrip(chr(13))}")
-
-    pending, first = "", None  # the legacy keeper stamped a line with its first entry
-    for e in mem.entries:
-        first = first or e
-        pending += e.text.decode("latin-1")
-        while "\n" in pending:
-            head, pending = pending.split("\n", 1)
-            emit(head, first.tick, first.level)
-            first = e if pending else None
-    if pending:
-        emit(pending, first.tick, first.level)
-    out.append(f"# {len(mem.entries)} message entries decoded")
-    return "\n".join(out) + "\n"
-
-
-def legacy_folder(root: Path, utc: str, boot_id: str, mem: MemLog, n: int, *, keep=("advlog.bin", "advlog.txt"),
-                  xz: bool = False, records=()) -> Path:
-    """One boot folder of the legacy keeper. keep: which of advlog.bin and advlog.txt exist; xz: compressed."""
-    folder = root / f"{utc}_{boot_id}"
-    folder.mkdir(parents=True)
-    for name, data in (("advlog.bin", mem.buffer()), ("advlog.txt", legacy_text(mem).encode())):
-        if name in keep:
-            (folder / (name + ".xz" if xz else name)).write_bytes(lzma.compress(data) if xz else data)
-    for slot, r in enumerate(records):
-        (folder / record_var(slot)).write_bytes(r.raw)
-    (folder / SUPPORT_VAR).write_bytes(b"\x07\x00\x00\x00\x01\x00")
-    (folder / "hwerrrec-decoded.txt").write_text(f"# 0 of these {len(records)} records were new\n")
-    (folder / "fpdt-boot.txt").write_text(fpdt_text(n))
-    (folder / "esrt.txt").write_text(esrt_text())
-    return folder
-
-
-LEGACY_INDEX = "# first seen 2026-01-02T03:04:05Z as HwErrRec0000, saved as 0000000000000000.bin\nHwErrRec0000 ...\n"
-
-
-def legacy_records(root: Path, records) -> None:
-    """The legacy error-record archive: one file per record, named by the hash of the record without its
-    4 attribute bytes, and index.txt."""
-    (root / "hwerrrec").mkdir(parents=True)
-    for r in records:
-        (root / "hwerrrec" / f"{sha16(r.raw[4:])}.bin").write_bytes(r.raw)
-    (root / "hwerrrec" / "index.txt").write_text(LEGACY_INDEX)
 
 
 def tree(root: Path) -> dict[str, bytes]:

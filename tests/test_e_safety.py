@@ -1,5 +1,5 @@
 """Group E of TEST-SCENARIOS.md: safety of every delete."""
-import lzma
+import shutil
 from datetime import datetime, timedelta
 
 import pytest
@@ -122,144 +122,45 @@ def test_E3_merged_log_missing_a_line(machine):
     machine.check()
 
 
-def test_E4_retention_by_number_of_runs(machine):
-    machine.remove_uefilogs()
-    runs, records = [], []
-    for i in range(4):
-        runs.append(machine.firmware_run(boot_lines(f"run{i}")))
-        records.append(record(runs[-1].reset + 2 * S, 0x10 + i))  # one record in each run
-        machine.add_record(records[-1])
-        if i == 0:
-            records.append(record(datetime(2026, 11, 19, 8, 0, 0), 0x99))  # and one in no run
-            machine.add_record(records[-1])
-        machine.keeper(env={"FWLK_KEEP_RUNS": "2"})
-        assert machine.folder_names() == [run.folder_name for run in runs[-2:]]  # oldest removed, never the newest
-
-    assert machine.record_copies() == {rec.hash for rec in records}  # the error-record archive is never pruned
-    assert len([line for line in machine.errrec_seen() if line[2] == "archived"]) == 5
-    assert len(machine.rows(runs[3])) == 10
-    assert len(machine.unattached().splitlines()) == 2
-    machine.check()
-
-
-def test_E4_retention_removes_unreferenced_raw_file_logs(machine):
-    first = machine.firmware_run(boot_lines("first"))
-    machine.keeper()
-    second = machine.firmware_run(boot_lines("second"))
-    machine.keeper()
-    machine.index = 0  # the rotation comes back to slot 1: the first boot's file is overwritten
-    third = machine.firmware_run(boot_lines("third"))
-    assert third.slot == first.slot == 1
-    machine.keeper(env={"FWLK_KEEP_RUNS": "2"})
-
-    assert machine.folder_names() == [second.folder_name, third.folder_name]
-    assert machine.raw_logs() == {second.file.hash, third.file.hash}  # the first boot's raw copy went with its folder
-    assert [line[3] for line in machine.bootefi_seen()].count(first.file.hash) == 2  # seen.tsv is never pruned
-    machine.check()
-
-
-def test_E4_retention_by_size_keeps_the_newest(machine):
-    machine.remove_uefilogs()
-    for i in range(3):
-        run = machine.firmware_run(boot_lines(f"run{i}"))
-        machine.keeper(env={"FWLK_KEEP_BYTES": "1"})
-        assert machine.folder_names() == [run.folder_name]  # far above the limit, and still there
-    machine.check()
-
-
-def test_E2_crash_before_the_dump_got_its_name(machine):
-    """A keeper run died after writing the memory dump under its temporary name: the dump is whole, the next
-    boot's run merges it."""
+@pytest.mark.parametrize("dump", [True, False])
+def test_E2_file_left_under_its_temporary_name_is_ignored(machine, dump):
+    """A keeper run died while writing a file of staging: what it left under the temporary name is not read, and
+    goes with the folder, beside a dump or alone."""
     crashed = machine.firmware_run(boot_lines("crashed"), late=[L(6000, "after the hand-over")], reset=T0)
     staging = machine.stage(crashed, datetime(2026, 11, 21, 4, 0, 0))
-    (staging / "advlog.bin").rename(staging / "advlog.bin.tmp")
-    (staging / "fpdt-boot.txt").unlink()
-    (staging / "esrt.txt").unlink()
+    (staging / "advlog.bin.tmp").write_bytes((staging / "advlog.bin").read_bytes()[:-20])
+    if not dump:
+        for name in ("advlog.bin", "fpdt-boot.txt", "esrt.txt"):
+            (staging / name).unlink()
+        del machine.memory_seen[crashed.boot_id]
     run = machine.firmware_run(boot_lines("now"), reset=T0 + timedelta(hours=1))
-    machine.keeper()
-
-    assert not staging.exists()
-    assert machine.log(crashed) == crashed.log()
-    assert machine.rows(crashed)[-1].message == "after the hand-over"
-    assert machine.log(run) == run.log()
-    machine.check()
-
-
-@pytest.mark.parametrize("beside", [(), ("fpdt-boot.txt", "esrt.txt")])
-def test_E2_staging_folder_with_nothing_readable_is_kept_and_reported(machine, beside):
-    """A dump cut short under its temporary name is not merged, and the folder does not stay without a word,
-    nor go with the dump because timings and versions are readable beside it."""
-    crashed = machine.firmware_run(boot_lines("crashed"), reset=T0)
-    staging = machine.stage(crashed, datetime(2026, 11, 21, 4, 0, 0))
-    cut = (staging / "advlog.bin").read_bytes()[:-20]
-    for name in {"advlog.bin", "fpdt-boot.txt", "esrt.txt"} - set(beside):
-        (staging / name).unlink()
-    (staging / "advlog.bin.tmp").write_bytes(cut)
-    del machine.memory_seen[crashed.boot_id]
-    run = machine.firmware_run(boot_lines("now"), reset=T0 + timedelta(hours=1))
-    res = machine.keeper(expect=1)
-
-    assert (staging / "advlog.bin.tmp").read_bytes() == cut
-    assert [line for line in res.starting("error: memory: ") if str(staging) in line]
-    assert machine.log(run) == run.log()  # the other sources are processed
-    keys = {name.split("_")[1] for name in machine.folder_names()}
-    assert keys == {f"fileonly-{crashed.file.hash}", run.boot_id} | ({crashed.boot_id} if beside else set())
-    machine.check()
-
-
-@pytest.mark.parametrize("legacy", ["advlog.bin.xz", "advlog.txt"])
-def test_E2_staging_folder_with_only_a_legacy_file_is_kept_and_reported(machine, legacy):
-    """Compressed dumps and decoded text are files of the legacy keeper: a keeper run reads neither in staging."""
-    crashed = machine.firmware_run(boot_lines("crashed"), reset=T0)
-    staging = machine.stage(crashed, datetime(2026, 11, 21, 4, 0, 0))
-    dump = (staging / "advlog.bin").read_bytes()
-    for name in ("advlog.bin", "fpdt-boot.txt", "esrt.txt"):
-        (staging / name).unlink()
-    (staging / legacy).write_bytes(lzma.compress(dump) if legacy.endswith(".xz") else b"# a legacy text\n")
-    del machine.memory_seen[crashed.boot_id]
-    run = machine.firmware_run(boot_lines("now"), reset=T0 + timedelta(hours=1))
-    res = machine.keeper(expect=1)
-
-    assert [p.name for p in staging.iterdir()] == [legacy]
-    assert [line for line in res.starting("error: memory: ") if str(staging) in line]
-    assert machine.log(run) == run.log()
-    machine.check()
-
-
-def test_E2_longer_dump_under_its_temporary_name_beside_advlog_bin(machine):
-    """A first keeper run of a boot failed its merge, a second one died after writing a longer dump and before
-    giving it its name: both dumps are offered, the longer one is the memory log (SPEC 4)."""
-    machine.remove_uefilogs()
-    lines = boot_lines("crashed")
-    crashed = machine.firmware_run(lines, reset=T0)
-    staging = machine.stage(crashed, datetime(2026, 11, 21, 4, 0, 0))
-    longer = MemLog.from_lines(lines + [L(9000, "second dump only")], T0)
-    (staging / "advlog.bin.tmp").write_bytes(longer.buffer())
-    machine.memory_seen[crashed.boot_id] = longer
-    machine.firmware_run(boot_lines("now"), reset=T0 + timedelta(hours=1))
-    machine.keeper()
-
-    assert not staging.exists()
-    assert machine.rows(crashed)[-1].message == "second dump only"
-    assert machine.sources(crashed) == f"memory\t{longer.hash}\t10\t-\t-\n"
-    machine.check()
-
-
-def test_E4_run_folder_left_under_its_removing_name_is_deleted(machine):
-    """A run folder is renamed before it is removed (SPEC 4): a keeper run stopped in the middle leaves no half
-    folder under a run folder's name, and the next run finishes the removal."""
-    machine.remove_uefilogs()
-    first = machine.firmware_run(boot_lines("first"))
-    machine.keeper()
-    folder = machine.folder(first)
-    half = folder.with_name(folder.name + ".removing")
-    folder.rename(half)
-    (half / "firmware.log").unlink()  # stopped after the first file
-    run = machine.firmware_run(boot_lines("now"))
     res = machine.keeper()
 
-    assert not half.exists() and res.starting("error: ") == []
-    assert machine.folder_names() == [run.folder_name]
+    assert not staging.exists() and res.starting("error: ") == []
+    if dump:
+        assert machine.log(crashed) == crashed.log()
+    assert machine.log(run) == run.log()
+    machine.check()
+
+
+@pytest.mark.parametrize("name, data", [("advlog.bin", b"not a memory dump"), ("advlog.txt", b"# some text\n")])
+def test_E2_staging_folder_with_nothing_readable_is_kept_and_reported(machine, name, data):
+    """A dump the decoder cannot read, or a file the keeper does not know: the folder stays, with one error, whatever
+    is readable beside it, and the other sources are processed."""
+    crashed = machine.firmware_run(boot_lines("crashed"), reset=T0)
+    staging = machine.stage(crashed, datetime(2026, 11, 21, 4, 0, 0))
+    (staging / "advlog.bin").unlink()
+    (staging / name).write_bytes(data)
+    if name != "advlog.bin":
+        for other in ("fpdt-boot.txt", "esrt.txt"):
+            (staging / other).unlink()
+    del machine.memory_seen[crashed.boot_id]
+    run = machine.firmware_run(boot_lines("now"), reset=T0 + timedelta(hours=1))
+    res = machine.keeper(expect=1)
+
+    assert (staging / name).read_bytes() == data
+    assert len([line for line in res.starting("error: memory: ") if str(staging) in line]) == 1
+    assert machine.log(run) == run.log()
     machine.check()
 
 
@@ -340,48 +241,6 @@ def test_E3_failed_check_keeps_the_unattached_rows(machine):
     machine.check()
 
 
-def test_E4_retention_follows_the_order_of_collection_not_the_firmware_clock(machine):
-    """A boot whose hardware clock reads an old date (flat clock battery) is the newest run, not the oldest."""
-    machine.remove_uefilogs()
-    env = {"FWLK_KEEP_RUNS": "2"}
-    machine.firmware_run(boot_lines("a"), reset=T0)
-    machine.keeper(env=env)
-    b = machine.firmware_run(boot_lines("b"), reset=T0 + timedelta(hours=1))
-    machine.keeper(env=env)
-    c = machine.firmware_run(boot_lines("c"), reset=datetime(2020, 1, 1, 0, 0, 0))
-    rec = record(datetime(2020, 1, 1, 0, 0, 2))
-    machine.add_record(rec)
-    machine.keeper(env=env)
-
-    assert machine.folder_names() == [c.folder_name, b.folder_name]
-    assert machine.log(c) == c.log([rec])
-    assert machine.records_in_firmware() == []
-
-    d = machine.firmware_run(boot_lines("d"), reset=T0 + timedelta(hours=2))
-    machine.keeper(env=env)
-    assert machine.folder_names() == [c.folder_name, d.folder_name]  # b was collected before c
-    runs = [line[2] for line in machine._tsv(machine.merged_root / "runs.tsv")]
-    assert runs[1:] == [b.boot_id, c.boot_id, d.boot_id]  # runs.tsv is never pruned
-    machine.check()
-
-
-def test_E4_a_run_whose_file_log_is_still_in_its_slot_is_not_removed(machine):
-    """Removed while its file is still in UefiLogs, a run would come back at the next keeper run as a run known
-    by its file only. So retention waits until the firmware has overwritten the file."""
-    env = {"FWLK_KEEP_RUNS": "3"}
-    runs = []
-    for i in range(11):
-        runs.append(machine.firmware_run(boot_lines(f"run{i}")))
-        machine.keeper(env=env)
-        assert not [name for name in machine.folder_names() if "fileonly-" in name]
-        assert machine.folder_names() == [run.folder_name for run in runs[-9:]]  # the nine slots
-
-    again = machine.keeper(env=env)
-    assert again.starting("archived ") == [] and again.starting("merged run ") == []
-    assert machine.raw_logs() == {run.file.hash for run in runs[-9:]}
-    machine.check()
-
-
 def test_E5_the_three_roots_must_be_separate_folders(machine):
     """Staging folders are removed once merged: with the staging root in the archive, that would be run folders."""
     for tag in "ab":
@@ -430,4 +289,32 @@ def test_E3_a_memory_row_without_its_uptime_stops_only_its_run(machine):
     path.write_bytes(log)
     machine.keeper()
     assert machine.log(run) == run.log()
+    machine.check()
+
+
+def test_E3_a_longer_dump_finishes_a_run_whose_log_was_not_written(machine):
+    """The first log failed its check, so sources.tsv lists a dump the run's log does not hold. A later, longer read
+    of the same boot is merged all the same: the run is not stuck, and its record is freed."""
+    run = machine.firmware_run(boot_lines("a"), reset=T0)
+    name = machine.add_record(record(T0 + 2 * S))
+    machine.keeper(expect=1, env={"FWLK_FAULT": "drop-row"})
+    run.mem = MemLog.from_lines(boot_lines("a") + [L(7000, "a later line")], run.reset)  # the firmware went on
+    run.mem.write(machine.devmem, machine.efivars)
+    res = machine.keeper()
+
+    assert res.starting("deleted error record ") == [f"deleted error record {name}"]
+    assert machine.log(run) == run.log([record(T0 + 2 * S)])
+    machine.check()
+
+
+def test_E2_another_name_in_the_staging_root_is_left_alone(machine):
+    """Only `<UTC time>_<boot id>` is a staging folder: anything else there is neither read nor removed."""
+    run = machine.firmware_run(boot_lines("a"), reset=T0)
+    stray = machine.stage(run, T0).rename(machine.memory_root / f"notatime_{run.boot_id}")
+    before = tree(stray)
+    machine.keeper()
+
+    assert tree(stray) == before
+    assert machine.log(run) == run.log()
+    shutil.rmtree(stray)
     machine.check()

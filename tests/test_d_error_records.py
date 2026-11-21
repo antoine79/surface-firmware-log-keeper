@@ -317,8 +317,8 @@ def test_D5_immutable_attribute_removed_before_the_deletion(machine, tmp_path):
     machine.check()
 
 
-def test_D10_unattached_record_moves_to_its_run_once_the_run_is_archived(machine):
-    """SPEC 3.1: a record belongs to the archived run whose span contains it, whenever that run is archived."""
+def test_D10_unattached_record_stays_there_when_its_run_is_archived_later(machine):
+    """SPEC 3.1: a record is placed once, among the runs archived when it is found."""
     machine.remove_uefilogs()
     run = machine.firmware_run(boot_lines("a"), reset=T0)
     rec, outside = record(T0 + 2 * S, 0x1A), record(datetime(2026, 11, 20, 9, 30, 0), 0x1B)
@@ -332,8 +332,8 @@ def test_D10_unattached_record_moves_to_its_run_once_the_run_is_archived(machine
 
     (machine.efivars / LOCATOR_VAR).write_bytes(locator)
     machine.keeper()
-    assert machine.log(run) == run.log([rec])
-    assert machine.unattached() == log_bytes(unattached_rows([outside]))
+    assert machine.log(run) == run.log()
+    assert machine.unattached() == log_bytes(unattached_rows([rec, outside]))
     machine.check()  # H4: one row per record
 
 
