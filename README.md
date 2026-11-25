@@ -2,7 +2,7 @@
 
 Keeps the logs that Project Mu UEFI firmware (Microsoft Surface and other Mu-based machines) leaves behind, which no Linux distribution saves today. It runs once per Linux boot as root, copies what the firmware left, merges it into one log per firmware run, and frees the firmware's error-record storage once each record is safely archived. It collects and stores; it never judges the content of the logs.
 
-[SPEC.md](SPEC.md) is the full specification; [TEST-SCENARIOS.md](TEST-SCENARIOS.md) lists what the tests check.
+[SPEC.md](SPEC.md) is the full specification, [DESIGN.md](DESIGN.md) explains how the code is laid out and why, and [TEST-SCENARIOS.md](TEST-SCENARIOS.md) lists what the tests check.
 
 ## What it reads
 
@@ -34,8 +34,8 @@ It deletes only two things: a staging folder once its content is in a run folder
 
 ```
 cd rust
-cargo build --release --offline
-cargo test --offline
+cargo build --release
+cargo test
 ```
 
 The binaries are `rust/target/release/firmware-log-keeper` and `rust/target/release/firmware-log-report`. It needs only the standard library and the `sha2` crate, and has no unsafe code.
@@ -54,7 +54,7 @@ The report tests run the `firmware-log-report` built beside the keeper, or the o
 ## Install
 
 ```
-(cd rust && cargo build --release --offline)
+(cd rust && cargo build --release)
 sudo ./install.sh install
 ```
 

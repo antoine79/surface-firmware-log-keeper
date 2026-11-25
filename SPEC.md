@@ -204,7 +204,7 @@ install.sh                    install | status | undo, as root, from the project
 LICENSE                       MIT
 ```
 
-Both are built with `cargo build --release --offline` in `rust/`; `install.sh` installs the keeper as `/usr/local/sbin/firmware-log-keeper` and the report as `/usr/local/bin/firmware-log-report`.
+Both are built with `cargo build --release` in `rust/`; `install.sh` installs the keeper as `/usr/local/sbin/firmware-log-keeper` and the report as `/usr/local/bin/firmware-log-report`.
 
 Nothing in the code is specific to one machine: no addresses, slot counts or device names. The unit (`systemd/firmware-log-keeper.service`):
 

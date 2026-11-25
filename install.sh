@@ -1,6 +1,6 @@
 #!/bin/bash
 # Install, check or remove the firmware-log keeper. Run as root from the project folder, after building:
-#   (cd rust && cargo build --release --offline)
+#   (cd rust && cargo build --release)
 #   sudo ./install.sh install | status | undo
 # install  copies the keeper to /usr/local/sbin, the report to /usr/local/bin and the unit to /etc/systemd/system,
 #          enables the unit and runs it once
@@ -17,7 +17,7 @@ REPORT=/usr/local/bin/firmware-log-report
 
 case "${1:-}" in
 install)
-	[ -x "$BUILT" ] && [ -x rust/target/release/firmware-log-report ] || { echo "build first: (cd rust && cargo build --release --offline)"; exit 1; }
+	[ -x "$BUILT" ] && [ -x rust/target/release/firmware-log-report ] || { echo "build first: (cd rust && cargo build --release)"; exit 1; }
 	[ -d /sys/firmware/efi ] || { echo "not booted in UEFI mode: nothing to keep"; exit 1; }
 	install -m 755 "$BUILT" "$BIN"
 	install -m 755 rust/target/release/firmware-log-report "$REPORT"
