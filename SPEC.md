@@ -188,20 +188,28 @@ tests/                        the pytest suite, synthetic fixtures only; runs th
 rust/                         Cargo workspace; the standard library and sha2 only, no unsafe code
   fwlk/                       library crate: the keeper, and the decoders firmware-log-report will share
   firmware-log-keeper/        the keeper binary: one command, a run
+systemd/firmware-log-keeper.service   the unit below
+install.sh                    install | status | undo, as root, from the project folder
+LICENSE                       MIT
 ```
 
-Still to come: `rust/firmware-log-report/` (section 8), `systemd/firmware-log-keeper.service`, `install.sh` (install | undo | status, as root) and `LICENSE` (MIT). The keeper is built with `cargo build --release --offline` in `rust/` and installed as `/usr/local/sbin/firmware-log-keeper`.
+Still to come: `rust/firmware-log-report/` (section 8). The keeper is built with `cargo build --release --offline` in `rust/` and installed as `/usr/local/sbin/firmware-log-keeper`.
 
-Nothing in the code is specific to one machine: no addresses, slot counts or device names. The unit:
+Nothing in the code is specific to one machine: no addresses, slot counts or device names. The unit (`systemd/firmware-log-keeper.service`):
 
 ```
 [Unit]
-Description=Keep the firmware's own logs (Advanced Logger, error records, boot timings, versions)
+Description=Keep the firmware's own logs (Advanced Logger, UefiLogs, error records, boot timings, versions)
+Documentation=https://github.com/antoine79/firmware-log-keeper
 After=local-fs.target
-RequiresMountsFor=/var/log
+# the EFI partition is read from the first of these that holds UefiLogs
+RequiresMountsFor=/var/log /boot/efi /efi /boot
+
 [Service]
 Type=oneshot
 ExecStart=/usr/local/sbin/firmware-log-keeper
+Nice=10
+
 [Install]
 WantedBy=multi-user.target
 ```

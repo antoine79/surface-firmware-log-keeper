@@ -1,0 +1,14 @@
+[Unit]
+Description=Keep the firmware's own logs (Advanced Logger, UefiLogs, error records, boot timings, versions)
+Documentation=https://github.com/antoine79/firmware-log-keeper
+After=local-fs.target
+# the EFI partition is read from the first of these that holds UefiLogs
+RequiresMountsFor=/var/log /boot/efi /efi /boot
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/firmware-log-keeper
+Nice=10
+
+[Install]
+WantedBy=multi-user.target

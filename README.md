@@ -50,7 +50,18 @@ FWLK_BIN=$PWD/rust/target/release/firmware-log-keeper \
 ## Install
 
 ```
-sudo install -m755 rust/target/release/firmware-log-keeper /usr/local/sbin/firmware-log-keeper
+(cd rust && cargo build --release --offline)
+sudo ./install.sh install
 ```
 
-Then add the systemd unit given in SPEC section 9 as `/etc/systemd/system/firmware-log-keeper.service` and run `sudo systemctl enable firmware-log-keeper.service`. To undo: `sudo systemctl disable firmware-log-keeper.service`, then remove the unit and the binary. The archive under `/var/log` stays.
+This copies the binary to `/usr/local/sbin/firmware-log-keeper` and the unit `systemd/firmware-log-keeper.service` to `/etc/systemd/system/`, enables it and runs it once. `sudo ./install.sh status` shows what the last run did; `sudo ./install.sh undo` removes the unit and the binary and keeps the archive under `/var/log`.
+
+The keeper deletes the firmware's error records once they are archived (see above): that is how the firmware's small record store (11 slots on a Surface Book 2) gets room for new ones. If you want the records left in the firmware, do not install it.
+
+## Tested on
+
+A Surface Book 2 13" (firmware from Microsoft's Project Mu builds) under Fedora 45 with the linux-surface kernel, at every boot since 21 Nov 2026. Nothing in the code is specific to that machine: it finds the memory log through the `AdvLoggerLocator` UEFI variable, and the error records, boot timings and versions are standard UEFI and ACPI. Other Mu-based machines are expected to work but have not been checked; reports are welcome.
+
+## License
+
+MIT, see [LICENSE](LICENSE).
