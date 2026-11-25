@@ -98,13 +98,15 @@ The keeper never panics; a failure gives an error line naming its step and exit 
 - L2. A staging folder that cannot be removed: `error: purge:`. A slot that is a folder is named in its error line, the EFI partition unchanged. Two staging folders of one boot with other timings: the run takes the later ones, and the earlier folder stays with an `error: memory:` line naming it. A merged root that cannot be listed: `error: keeper:`, nothing merged or purged, the file logs archived all the same.
 - L3. With standard output on a pipe nobody reads, a run does its work and exits as usual, and nothing goes to standard error; so does a usage error.
 
-## K. Report program (read-only, separate)
+## K. Report program (read-only, separate; `tests/test_k_report.py`)
 
-- K1. Lists the firmware boots with their sources, line counts and firmware duration, from the archive alone.
-- K2. Rotation gap: detected from the index values in `seen.tsv` (B7's archive).
-- K3. Boots that never reached Linux listed; long firmware stages listed above a threshold given on the command line.
-- K4. Error records decoded, with when each was archived and deleted.
-- K5. The archive is byte-for-byte unchanged after any report command.
+Every report command is checked to leave the whole scratch tree byte-for-byte unchanged (K5).
+
+- K1. Lists the firmware runs with their sources, rows per source, lines in one copy only and firmware stage, from the archive alone; without a file log the stage comes from the boot timings.
+- K2. Rotation gap: B7's archive after an earlier keeper run (13 file logs written between two keeper runs) gives "all 9 file logs were new, 4 or more were overwritten unseen", and its surviving hung runs are listed as never having reached a Linux boot that ran the keeper. No gap when the index moved by the number of new files; a file first seen by the first keeper run is said to be older than the keeper.
+- K3. Long firmware stages and repeated lines listed above the thresholds, with the defaults and with values given on the command line.
+- K4. Error records decoded, with where their row is and when each was archived and deleted.
+- K5. `timeline` sorts every row of the runs and of `unattached/` by time; `decode-advlog` gives the memory rows the keeper archived for that dump; usage errors exit 2; a missing archive is an `error:` line and exit 1.
 
 ## J. Real data (local only, never in the repository)
 

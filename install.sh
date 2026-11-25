@@ -2,22 +2,25 @@
 # Install, check or remove the firmware-log keeper. Run as root from the project folder, after building:
 #   (cd rust && cargo build --release --offline)
 #   sudo ./install.sh install | status | undo
-# install  copies the binary to /usr/local/sbin and the unit to /etc/systemd/system, enables it and runs it once
+# install  copies the keeper to /usr/local/sbin, the report to /usr/local/bin and the unit to /etc/systemd/system,
+#          enables the unit and runs it once
 # status   unit state, this boot's keeper output, what is left in staging and in the firmware's record store
-# undo     disables and removes the unit and the binary; the archive under /var/log is kept
+# undo     disables and removes the unit and both programs; the archive under /var/log is kept
 set -euo pipefail
 cd "$(dirname "$0")"
 BIN=/usr/local/sbin/firmware-log-keeper
 UNIT=/etc/systemd/system/firmware-log-keeper.service
 BUILT=rust/target/release/firmware-log-keeper
+REPORT=/usr/local/bin/firmware-log-report
 
 [ "$(id -u)" = 0 ] || { echo "run with sudo"; exit 1; }
 
 case "${1:-}" in
 install)
-	[ -x "$BUILT" ] || { echo "build first: (cd rust && cargo build --release --offline)"; exit 1; }
+	[ -x "$BUILT" ] && [ -x rust/target/release/firmware-log-report ] || { echo "build first: (cd rust && cargo build --release --offline)"; exit 1; }
 	[ -d /sys/firmware/efi ] || { echo "not booted in UEFI mode: nothing to keep"; exit 1; }
 	install -m 755 "$BUILT" "$BIN"
+	install -m 755 rust/target/release/firmware-log-report "$REPORT"
 	install -m 644 systemd/firmware-log-keeper.service "$UNIT"
 	systemctl daemon-reload
 	systemctl enable firmware-log-keeper.service
@@ -34,11 +37,11 @@ status)
 	;;
 undo)
 	systemctl disable firmware-log-keeper.service 2>/dev/null || true
-	rm -f "$UNIT" "$BIN"
+	rm -f "$UNIT" "$BIN" "$REPORT"
 	systemctl daemon-reload
-	echo "removed $UNIT and $BIN; the archive in /var/log/firmware* is kept"
+	echo "removed $UNIT, $BIN and $REPORT; the archive in /var/log/firmware* is kept"
 	;;
 *)
-	sed -n '2,7p' "$0"; exit 1
+	sed -n '2,8p' "$0"; exit 1
 	;;
 esac

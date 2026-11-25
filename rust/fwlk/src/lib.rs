@@ -5,8 +5,8 @@
 //! content of the logs.
 #![forbid(unsafe_code)]
 
-mod advlog;
-mod archive;
+pub mod advlog;
+pub mod archive;
 mod config;
 mod cper;
 mod disk;
@@ -15,9 +15,9 @@ mod gather;
 mod keeper;
 mod merge;
 mod plan;
-mod rows;
+pub mod rows;
 mod sysfs;
-mod time;
+pub mod time;
 
 pub use keeper::main;
 

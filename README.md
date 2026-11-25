@@ -26,6 +26,10 @@ A missing source is skipped and the others are still processed.
 
 It deletes only two things: a staging folder once its content is in a run folder and checked, and an error-record variable once its raw copy is written, read back and equal and its row is checked in a log. Nothing on the EFI partition is ever written. Every root can be moved with an `FWLK_*` variable (SPEC section 6). Its output goes to standard output, one line per thing done or failed; the exit status is 1 if anything failed.
 
+## Report
+
+`firmware-log-report` reads the archive and prints a summary; it writes nothing and needs no root. It lists every firmware run (sources, rows, time to the hand-over to the boot loader), the runs known only by their file log (a hang in the firmware, or another system started), every error record with when it was archived and deleted, file logs the firmware overwrote before any keeper run saw them, firmware stages over 30 s and lines repeated more than 50 times in one run (`--stage-over SECONDS`, `--repeat-over COUNT`). `firmware-log-report timeline` prints every row of the archive sorted by firmware-clock time, and `firmware-log-report decode-advlog FILE` decodes a raw memory dump. SPEC section 8 has the details.
+
 ## Build
 
 ```
@@ -34,7 +38,7 @@ cargo build --release --offline
 cargo test --offline
 ```
 
-The binary is `rust/target/release/firmware-log-keeper`. It needs only the standard library and the `sha2` crate, and has no unsafe code.
+The binaries are `rust/target/release/firmware-log-keeper` and `rust/target/release/firmware-log-report`. It needs only the standard library and the `sha2` crate, and has no unsafe code.
 
 ## Test
 
@@ -45,7 +49,7 @@ FWLK_BIN=$PWD/rust/target/release/firmware-log-keeper \
   uv run --python 3.13 --with pytest pytest -q -p no:cacheprovider tests
 ```
 
-`FWLK_REALDATA=<folder>` adds a run on a copy of a real archive (folders `firmware/`, `firmware_bootefilogs/`, `UefiLogs/`, `efivars/`); the folder itself is never written. `FWLK_PARITY_BIN=<another build>` runs every scenario a second time with that build and compares the two.
+The report tests run the `firmware-log-report` built beside the keeper, or the one named by `FWLK_REPORT_BIN`. `FWLK_REALDATA=<folder>` adds a run on a copy of a real archive (folders `firmware/`, `firmware_bootefilogs/`, `UefiLogs/`, `efivars/`); the folder itself is never written. `FWLK_PARITY_BIN=<another build>` runs every scenario a second time with that build and compares the two.
 
 ## Install
 
@@ -54,7 +58,7 @@ FWLK_BIN=$PWD/rust/target/release/firmware-log-keeper \
 sudo ./install.sh install
 ```
 
-This copies the binary to `/usr/local/sbin/firmware-log-keeper` and the unit `systemd/firmware-log-keeper.service` to `/etc/systemd/system/`, enables it and runs it once. `sudo ./install.sh status` shows what the last run did; `sudo ./install.sh undo` removes the unit and the binary and keeps the archive under `/var/log`.
+This copies the keeper to `/usr/local/sbin/firmware-log-keeper`, the report to `/usr/local/bin/firmware-log-report` and the unit `systemd/firmware-log-keeper.service` to `/etc/systemd/system/`, enables it and runs it once. `sudo ./install.sh status` shows what the last run did; `sudo ./install.sh undo` removes the unit and both programs and keeps the archive under `/var/log`.
 
 The keeper deletes the firmware's error records once they are archived (see above): that is how the firmware's small record store (11 slots on a Surface Book 2) gets room for new ones. If you want the records left in the firmware, do not install it.
 

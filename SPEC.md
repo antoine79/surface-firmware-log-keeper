@@ -168,14 +168,24 @@ The three roots must be three separate folders, none inside another, and none ma
 
 ## 8. `firmware-log-report` (separate program, read-only)
 
-Reads the three roots and prints; writes nothing. Each item is derived from the archive alone:
+Reads the three roots (the same `FWLK_*_ROOT` variables and defaults as the keeper, section 6) and prints to standard output; writes nothing. The archive is world-readable, so it needs no root. Each item is derived from the archive alone.
 
-- list of firmware runs: first time, run key, sources, rows per source, lines found in one copy only, duration of the firmware stage;
-- runs known by their file log only (`fileonly-` folders), and error records attached to no run. Such a run never reached Linux only if the keeper could read memory logs then: the keeper run that first saw the file (first line of its hash in `firmware_bootefilogs/seen.tsv`) has a `memory` line in the `sources.tsv` of its own boot's folder. Otherwise the report says only that the memory log was not read;
-- rotation gaps: from `firmware_bootefilogs/seen.tsv`, a jump of `UEFI_Index` larger than the number of new files seen means file logs were overwritten before any keeper run saw them;
-- long firmware stages and repeated lines, with thresholds given on the command line;
-- one global timeline across runs, on request (all rows of all files sorted by `time`);
-- `decode-advlog F`: decode a raw memory dump.
+```
+firmware-log-report [--stage-over SECONDS] [--repeat-over COUNT]   the summary below (defaults 30 s and 50)
+firmware-log-report timeline                                        every row of every run and of unattached/, by time
+firmware-log-report decode-advlog FILE                              a raw memory dump, decoded as the keeper does (1.1)
+```
+
+The summary, in this order:
+
+- list of firmware runs, one line each: run folder, sources (from `sources.tsv`), rows per source, lines found in one copy only (the `memory` rows of a run that has both copies; `-` with one copy), and the duration of the firmware stage: the uptime of the run's last `both` or `bootefi` row (the file log is written at the hand-over to the boot loader), else `bootloader_launch_ns` of `fpdt-boot.txt`;
+- runs known by their file log only (`fileonly-` folders). Such a run never reached Linux only if the keeper could read memory logs then: the keeper run that first saw the file (first line of its hash in `firmware_bootefilogs/seen.tsv`) has a `memory` line in the `sources.tsv` of its own boot's folder. Otherwise the report says only that the memory log was not read. A file first seen by the first keeper run of `seen.tsv` was written before any keeper ran, so the report says it may have reached Linux. "Never reached Linux" means no Linux boot that ran the keeper: the run may have hung in the firmware or started another system;
+- error records: every record that has a row (in a run or in `unattached/`) or a line in `hwerrrec/seen.tsv`, with its time, the first time of each action of `hwerrrec/seen.tsv` (archived, deleted, kept with its reason), where its row is, and its row's text; the heading counts those attached to no run;
+- rotation gaps: from `firmware_bootefilogs/seen.tsv`. `UEFI_Index` names the slot the firmware wrote last (1 to 9), so between two keeper runs it wrote as many file logs as the index moved, modulo 9. When fewer new contents than that were seen, the rest were overwritten unseen. When all 9 were new, the firmware may have gone round more than once: the report gives the smallest number lost, "or more";
+- firmware stages longer than `--stage-over` seconds, and lines (other than error-record rows) repeated more than `--repeat-over` times in one run, most repeated first. The defaults come from the Surface Book 2 data: a normal run hands over at about 11 s and repeats no line more than 8 times;
+- a staging root that is not empty (the next keeper run merges it).
+
+A file that cannot be read or is not in the keeper's format gives one `error: <path>: <reason>` line at the end and exit status 1; the rest is still printed. A usage error prints the usage, beginning `usage: `, with exit status 2.
 
 Thresholds, wording and output formats of the report can change freely without touching the keeper or the archive.
 
@@ -186,14 +196,15 @@ README.md, SPEC.md, TEST-SCENARIOS.md
 tests/                        the pytest suite, synthetic fixtures only; runs the keeper named by FWLK_BIN
   test_realdata.py            optional, runs only when FWLK_REALDATA points to a local snapshot
 rust/                         Cargo workspace; the standard library and sha2 only, no unsafe code
-  fwlk/                       library crate: the keeper, and the decoders firmware-log-report will share
+  fwlk/                       library crate: the keeper, and the decoders the report shares
   firmware-log-keeper/        the keeper binary: one command, a run
+  firmware-log-report/        the report binary (section 8)
 systemd/firmware-log-keeper.service   the unit below
 install.sh                    install | status | undo, as root, from the project folder
 LICENSE                       MIT
 ```
 
-Still to come: `rust/firmware-log-report/` (section 8). The keeper is built with `cargo build --release --offline` in `rust/` and installed as `/usr/local/sbin/firmware-log-keeper`.
+Both are built with `cargo build --release --offline` in `rust/`; `install.sh` installs the keeper as `/usr/local/sbin/firmware-log-keeper` and the report as `/usr/local/bin/firmware-log-report`.
 
 Nothing in the code is specific to one machine: no addresses, slot counts or device names. The unit (`systemd/firmware-log-keeper.service`):
 
