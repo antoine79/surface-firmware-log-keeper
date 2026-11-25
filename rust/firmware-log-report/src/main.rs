@@ -6,9 +6,12 @@ use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
+use firmware_logs::archive_reader::{read_unattached, run_folders, run_log, FILE_ONLY};
+use firmware_logs::dates::Time;
+use firmware_logs::firmware_error_record::Record;
 use firmware_logs::firmware_memory_log;
-use firmware_logs::archive_reader::{folder_key, FILE_ONLY};
 use firmware_logs::log_format::{parse_log, Listing, Row, Source};
+use firmware_logs::merge_logs::unattached_rows;
 
 /// println! that stops the report, exit status 1, when its output cannot be written (a reader such as `head` that
 /// went away, a full disk) instead of panicking.
@@ -58,30 +61,45 @@ struct Run {
     fpdt: String,
 }
 
-fn read(path: &Path, errors: &mut Errors) -> Option<Vec<u8>> {
-    fs::read(path).map_err(|e| errors.add(path, e)).ok()
-}
-
+/// The run folders, read with the keeper's own functions (SPEC 2), in name order.
 fn runs(merged: &Path, errors: &mut Errors) -> Vec<Run> {
-    let names = match fs::read_dir(merged) {
-        Ok(dir) => dir.filter_map(|e| e.ok()?.file_name().into_string().ok()).collect::<Vec<_>>(),
+    // the keeper treats a missing archive as an empty one; for the report it is worth saying
+    if let Err(e) = fs::metadata(merged) {
+        errors.add(merged, e);
+        return Vec::new();
+    }
+    let folders = match run_folders(merged) {
+        Ok(folders) => folders,
         Err(e) => {
             errors.add(merged, e);
             return Vec::new();
         }
     };
-    let mut runs: Vec<Run> = names.into_iter().filter_map(|name| {
-        let key = folder_key(&name)?.to_string();
-        let dir = merged.join(&name);
-        let listing = read(&dir.join("sources.tsv"), errors)
-            .and_then(|d| Listing::parse(&d).map_err(|e| errors.add(&dir.join("sources.tsv"), e)).ok());
-        let rows = read(&dir.join("firmware.log"), errors)
-            .and_then(|d| parse_log(&d).map_err(|e| errors.add(&dir.join("firmware.log"), e)).ok());
+    let mut runs: Vec<Run> = folders.into_iter().map(|(key, folder)| {
+        let dir = merged.join(&folder.name);
+        let listing = folder.listing.map_err(|e| errors.add(&dir.join("sources.tsv"), e)).unwrap_or_default();
+        let rows = match run_log(merged, &folder.name) {
+            Ok(Some(log)) => parse_log(&log).map_err(|e| errors.add(&dir.join("firmware.log"), e)).unwrap_or_default(),
+            Ok(None) => {
+                errors.add(&dir, "no firmware.log yet (the next keeper run writes it)");
+                Vec::new()
+            }
+            Err(e) => {
+                errors.add(&dir, e);
+                Vec::new()
+            }
+        };
         let fpdt = fs::read_to_string(dir.join("fpdt-boot.txt")).unwrap_or_default();
-        Some(Run { name, key, listing: listing.unwrap_or_default(), rows: rows.unwrap_or_default(), fpdt })
+        Run { name: folder.name, key, listing, rows, fpdt }
     }).collect();
     runs.sort_by(|a, b| a.name.cmp(&b.name));
     runs
+}
+
+/// unattached/firmware.log, read with the keeper's own function.
+fn unattached(merged: &Path, errors: &mut Errors) -> BTreeMap<String, Record> {
+    read_unattached(merged).map_err(|e| errors.add(&merged.join("unattached").join("firmware.log"), e))
+        .unwrap_or_default()
 }
 
 fn secs(ms: i64) -> String {
@@ -174,7 +192,7 @@ fn gap(before: &Sighting, after: &Sighting) -> Option<String> {
 
 /// Every error record: its row (decoded, in a run or in unattached/) and when it was archived and deleted, from
 /// hwerrrec/seen.tsv.
-fn records(runs: &[Run], unattached: &[Row], merged: &Path, errors: &mut Errors) {
+fn records(runs: &[Run], unattached: &BTreeMap<String, Record>, merged: &Path, errors: &mut Errors) {
     let seen_path = merged.join("hwerrrec").join("seen.tsv");
     let seen = match fs::read(&seen_path) {
         Ok(d) => String::from_utf8_lossy(&d).into_owned(),
@@ -192,15 +210,17 @@ fn records(runs: &[Run], unattached: &[Row], merged: &Path, errors: &mut Errors)
             events.entry(hash).or_default().entry(what).or_insert_with(|| utc.to_string());
         }
     }
-    let rows = runs.iter().flat_map(|r| r.rows.iter().map(move |row| (r.name.as_str(), row)))
-        .chain(unattached.iter().map(|row| ("unattached", row)));
-    let mut list: Vec<(Option<firmware_logs::dates::Time>, String, String)> = Vec::new();
+    let mut list: Vec<(Option<Time>, String, String)> = Vec::new();
     let mut with_row = std::collections::HashSet::new();
-    for (place, row) in rows {
+    for (place, row) in runs.iter().flat_map(|r| r.rows.iter().map(move |row| (r.name.as_str(), row))) {
         if let Some(hash) = row.source.record() {
             with_row.insert(hash.to_string());
             list.push((row.time, hash.to_string(), format!("in {place}  {}", row.text)));
         }
+    }
+    for (hash, rec) in unattached {
+        with_row.insert(hash.clone());
+        list.push((rec.time, hash.clone(), format!("in unattached  {}", rec.text)));
     }
     for hash in events.keys().filter(|h| !with_row.contains(**h)) {
         list.push((None, hash.to_string(), "no row yet (the next keeper run writes it)".into()));
@@ -253,15 +273,7 @@ fn summary(stage_over: f64, repeat_over: usize) -> i32 {
         say!("  {}  {verdict}", run.name);
     }
 
-    let unattached_path = merged.join("unattached").join("firmware.log");
-    let unattached = match fs::read(&unattached_path) {
-        Ok(d) => parse_log(&d).map_err(|e| errors.add(&unattached_path, e)).unwrap_or_default(),
-        Err(e) if e.kind() == io::ErrorKind::NotFound => Vec::new(),
-        Err(e) => {
-            errors.add(&unattached_path, e);
-            Vec::new()
-        }
-    };
+    let unattached = unattached(&merged, &mut errors);
     records(&runs, &unattached, &merged, &mut errors);
 
     let gaps: Vec<String> = keeper_runs.windows(2).filter_map(|w| gap(&w[0], &w[1])).collect();
@@ -304,12 +316,8 @@ fn timeline() -> i32 {
     let merged = root("FWLK_MERGED_ROOT", "/var/log/firmware");
     let mut all: Vec<(String, Row)> = runs(&merged, &mut errors).into_iter()
         .flat_map(|run| run.rows.into_iter().map(move |r| (run.key.clone(), r))).collect();
-    let unattached = merged.join("unattached").join("firmware.log");
-    if unattached.exists() {
-        if let Some(rows) = read(&unattached, &mut errors).and_then(|d| parse_log(&d).map_err(|e| errors.add(&unattached, e)).ok()) {
-            all.extend(rows.into_iter().map(|r| ("unattached".to_string(), r)));
-        }
-    }
+    let unattached = unattached(&merged, &mut errors);
+    all.extend(unattached_rows(unattached.values()).into_iter().map(|r| ("unattached".to_string(), r)));
     // a stable sort keeps each run's own order (SPEC 3.4) among rows of the same time
     all.sort_by_key(|(_, r)| (r.time.is_none(), r.time));
     say!("time\tuptime_s\tsource\trun\tmessage");

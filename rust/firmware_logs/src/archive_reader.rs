@@ -1,5 +1,5 @@
 //! The archive as it is at the start of the keeper run (SPEC 2): its run folders and unattached/firmware.log,
-//! and the raw copies, read on demand and never written here.
+//! and the raw copies, read on demand and never written here. The report reads the archive with the same functions.
 use std::collections::BTreeMap;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -38,26 +38,37 @@ pub struct Archive<'c> {
     pub unattached: Option<BTreeMap<String, Record>>,
 }
 
+/// The run folders of a merged root, by run key. A root that does not exist has none.
+pub fn run_folders(root: &Path) -> io::Result<BTreeMap<String, Folder>> {
+    let names = match list(root) {
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Vec::new(),
+        r => r?,
+    };
+    let mut folders = BTreeMap::new();
+    for name in names.into_iter().filter_map(|n| n.into_string().ok()) {
+        let dir = root.join(&name);
+        let Some(key) = folder_key(&name).filter(|_| dir.is_dir()) else { continue };
+        let listing = read_or_none(&dir.join("sources.tsv")).and_then(|d| Listing::parse(&d.unwrap_or_default()));
+        folders.insert(key.to_string(), Folder { has_log: dir.join("firmware.log").is_file(), name, listing });
+    }
+    Ok(folders)
+}
+
+/// The firmware.log of the run folder `name`, if it has one.
+pub fn run_log(root: &Path, name: &str) -> io::Result<Option<Vec<u8>>> {
+    read_or_none(&root.join(name).join("firmware.log"))
+}
+
 impl<'c> Archive<'c> {
     pub fn open(cfg: &'c Config, out: &mut Output) -> io::Result<Archive<'c>> {
-        let names = match list(&cfg.merged_root) {
-            Err(e) if e.kind() == io::ErrorKind::NotFound => Vec::new(),
-            r => r?,
-        };
-        let mut folders = BTreeMap::new();
-        for name in names.into_iter().filter_map(|n| n.into_string().ok()) {
-            let dir = cfg.merged_root.join(&name);
-            let Some(key) = folder_key(&name).filter(|_| dir.is_dir()) else { continue };
-            let listing = read_or_none(&dir.join("sources.tsv")).and_then(|d| Listing::parse(&d.unwrap_or_default()));
-            folders.insert(key.to_string(), Folder { has_log: dir.join("firmware.log").is_file(), name, listing });
-        }
-        let unattached = unattached(&cfg.merged_root.join("unattached").join("firmware.log"))
+        let folders = run_folders(&cfg.merged_root)?;
+        let unattached = read_unattached(&cfg.merged_root)
             .map_err(|e| out.error("errrec", format!("unattached/firmware.log: {e}"))).ok();
         Ok(Archive { cfg, folders, unattached })
     }
 
     pub fn log(&self, name: &str) -> io::Result<Option<Vec<u8>>> {
-        read_or_none(&self.cfg.merged_root.join(name).join("firmware.log"))
+        run_log(&self.cfg.merged_root, name)
     }
 
     /// An archived raw copy, checked against the hash it is named after.
@@ -83,9 +94,9 @@ impl<'c> Archive<'c> {
     }
 }
 
-/// The records whose rows unattached/firmware.log holds, by hash.
-fn unattached(path: &Path) -> io::Result<BTreeMap<String, Record>> {
-    let rows = match read_or_none(path)? {
+/// The records whose rows unattached/firmware.log holds, by hash; none if it does not exist.
+pub fn read_unattached(root: &Path) -> io::Result<BTreeMap<String, Record>> {
+    let rows = match read_or_none(&root.join("unattached").join("firmware.log"))? {
         Some(log) if !log.is_empty() => parse_log(&log)?,
         _ => Vec::new(),
     };
