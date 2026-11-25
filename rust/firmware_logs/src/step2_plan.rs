@@ -4,15 +4,15 @@ use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::io;
 use std::path::PathBuf;
 
-use crate::advlog::MemLine;
-use crate::archive::{Archive, FILE_ONLY};
+use crate::firmware_memory_log::MemLine;
+use crate::archive_reader::{Archive, FILE_ONLY};
 use crate::bad;
-use crate::config::Output;
-use crate::cper::Record;
-use crate::gather::{Dump, SeenFile, SeenRecord, Staged};
-use crate::merge::{self, Key, Merge};
-use crate::rows::{format_log, parse_log, COLUMNS};
-use crate::time::Time;
+use crate::output::Output;
+use crate::firmware_error_record::Record;
+use crate::step1_collect::{Dump, SeenFile, SeenRecord, Staged};
+use crate::merge_logs::{self, Key, Merge};
+use crate::log_format::{format_log, parse_log, COLUMNS};
+use crate::dates::Time;
 
 /// The memory log of a run.
 #[derive(Default)]
@@ -60,7 +60,7 @@ impl Run {
                 // the memory log's lines exist nowhere else than in the run's log; no log at all holds no line
                 let log = old_log.as_deref().filter(|l| !l.is_empty()).unwrap_or(COLUMNS.as_bytes());
                 let hash = hash.clone();
-                match parse_log(log).map(|rows| merge::memory_lines(&rows)) {
+                match parse_log(log).map(|rows| merge_logs::memory_lines(&rows)) {
                     Ok(lines) if lines.len() == *count => Memory::Held { hash, lines },
                     Ok(lines) => {
                         let why = format!("{name}/firmware.log: {} of its {count} memory lines", lines.len());
@@ -80,10 +80,10 @@ impl Run {
         let take = match &self.memory {
             _ if self.broken.is_some() => return false,
             Memory::None => true,
-            Memory::Held { hash, lines } => *hash == dump.hash || merge::begins(&dump.lines, lines),
+            Memory::Held { hash, lines } => *hash == dump.hash || merge_logs::begins(&dump.lines, lines),
             // the lines the log holds are kept by the check of 3.5 against the old log
             Memory::Lost { hash, lines, .. } => {
-                *hash == dump.hash || lines.as_ref().is_some_and(|l| merge::begins(&dump.lines, l))
+                *hash == dump.hash || lines.as_ref().is_some_and(|l| merge_logs::begins(&dump.lines, l))
             }
         };
         if take {
@@ -91,7 +91,7 @@ impl Run {
             return true;
         }
         // a dump that is the beginning of the memory log held adds nothing
-        matches!(&self.memory, Memory::Held { lines, .. } if merge::begins(lines, &dump.lines))
+        matches!(&self.memory, Memory::Held { lines, .. } if merge_logs::begins(lines, &dump.lines))
     }
 
     fn memory_lines(&self) -> io::Result<Option<&[MemLine]>> {
@@ -114,7 +114,7 @@ impl Run {
         }
         let files = self.files.keys().map(|h| archive.file(h)).collect::<io::Result<Vec<_>>>()?;
         let records = self.records.iter().map(|h| archive.record(h)).collect::<io::Result<Vec<_>>>()?;
-        merge::render(self.memory_lines()?, files, records)
+        merge_logs::render(self.memory_lines()?, files, records)
     }
 
     /// The files of the run's folder, its log checked.
@@ -143,9 +143,9 @@ impl Run {
     fn check(&self, log: &[u8], merge: &Merge) -> io::Result<()> {
         let back = parse_log(log)?;
         let file = merge.merged.map(|i| (&merge.files[i], merge.untagged));
-        merge::verify(&back, self.memory_lines()?, file, &merge.records)?;
+        merge_logs::verify(&back, self.memory_lines()?, file, &merge.records)?;
         match self.old_log.as_deref().filter(|old| *old != log) {
-            Some(old) => merge::keeps(&back, &parse_log(old)?),
+            Some(old) => merge_logs::keeps(&back, &parse_log(old)?),
             None => Ok(()),
         }
     }
@@ -250,7 +250,7 @@ fn assign_staging(runs: &mut Runs, staged: &[Staged]) -> BTreeSet<PathBuf> {
 fn assign_files(runs: &mut Runs, staged: &[Staged], files: &[SeenFile]) {
     let logged: BTreeMap<&str, HashSet<Key>> = staged.iter().filter(|s| s.dump.is_some()).map(|s| {
         let lines = runs.map.get(&s.boot).and_then(|r| r.memory_lines().ok().flatten()).unwrap_or(&[]);
-        (s.boot.as_str(), merge::memory_keys(lines).into_iter().collect())
+        (s.boot.as_str(), merge_logs::memory_keys(lines).into_iter().collect())
     }).collect();
     for f in files {
         let owners = runs.archive.owners(|l| l.files.contains_key(&f.hash));
@@ -260,7 +260,7 @@ fn assign_files(runs: &mut Runs, staged: &[Staged], files: &[SeenFile]) {
             }
             continue;
         }
-        let key = logged.iter().find(|(_, keys)| merge::pairing(&f.log, keys).is_some())
+        let key = logged.iter().find(|(_, keys)| merge_logs::pairing(&f.log, keys).is_some())
             .map_or_else(|| format!("{FILE_ONLY}{}", f.hash), |(boot, _)| boot.to_string());
         runs.get(&key).files.entry(f.hash.clone()).or_insert_with(|| f.slot.clone());
     }
@@ -301,9 +301,9 @@ fn place(runs: &mut Runs, pending: Vec<&Record>, out: &mut Output) -> Option<Una
     }
     let unattached = unattached?;
     let log = added.then(|| {
-        let log = format_log(&merge::unattached_rows(unattached.values()));
+        let log = format_log(&merge_logs::unattached_rows(unattached.values()));
         let all: Vec<Record> = unattached.values().cloned().collect();
-        parse_log(&log).and_then(|back| merge::verify(&back, None, None, &all)).map(|_| log)
+        parse_log(&log).and_then(|back| merge_logs::verify(&back, None, None, &all)).map(|_| log)
     }).transpose();
     match log {
         Ok(log) => Some(Unattached { records: unattached.into_keys().collect(), log }),
@@ -324,7 +324,7 @@ fn spans(runs: &Runs) -> Vec<(Time, String, Time)> {
     });
     let touched = runs.map.iter().map(|(key, run)| (key, run.render(archive).ok().map(|m| m.rows)));
     untouched.chain(touched).filter_map(|(key, rows)| {
-        let (a, b) = merge::span(&rows?)?;
+        let (a, b) = merge_logs::span(&rows?)?;
         Some((a, key.clone(), b))
     }).collect()
 }

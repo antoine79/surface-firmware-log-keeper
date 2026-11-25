@@ -13,37 +13,37 @@ The archive is plain text: tab-separated logs and lists, plus raw copies named a
 
 ## A keeper run
 
-`keeper.rs` runs four steps in order. The first only copies, the second writes nothing, and only the last one deletes.
+The keeper's `main.rs` runs four steps in order. The first only copies, the second writes nothing, and only the last one deletes.
 
-1. **Gather** (`gather.rs`). Copy this boot's memory log, boot timings and firmware versions to a staging folder, and archive each file log and error record raw. A source that fails never stops the others.
-2. **Plan** (`plan.rs`). From the archive as read at the start of the run (`archive.rs`), decide which firmware run each source belongs to and build the files of every run folder concerned. Each new log is checked here, in memory, before it is written.
-3. **Apply** (`keeper.rs`). Write the run folders that changed: `sources.tsv` first, so that a run stopped halfway finds what the folder should hold, and `firmware.log` last.
-4. **Purge** (`keeper.rs`). Remove each staging folder whose content is now in a checked log, and delete from the firmware each error record whose row is.
+1. **Collect** (`step1_collect.rs`). Copy this boot's memory log, boot timings and firmware versions to a staging folder, and archive each file log and error record raw. A source that fails never stops the others.
+2. **Plan** (`step2_plan.rs`). From the archive as read at the start of the run (`archive_reader.rs`), decide which firmware run each source belongs to and build the files of every run folder concerned. Each new log is checked here, in memory, before it is written.
+3. **Write** (`step3_write.rs`). Write the run folders that changed: `sources.tsv` first, so that a run stopped halfway finds what the folder should hold, and `firmware.log` last.
+4. **Purge** (`step4_purge.rs`). Remove each staging folder whose content is now in a checked log, and delete from the firmware each error record whose row is.
 
 All the decisions live in the plan, so writing and deleting stay short and simple.
 
 ## Where things are
 
-The code is in the library crate `rust/fwlk`; the two programs are thin.
+The code is in the library `rust/firmware_logs`; each program is one `main.rs` that uses it.
 
 | File | What it does |
 |---|---|
-| `advlog.rs` | decodes the firmware's memory log (Project Mu's Advanced Logger buffer), read through `/dev/mem` |
-| `filelog.rs` | parses one `UEFI_Log<n>.txt` of the EFI partition |
-| `cper.rs` | decodes an error record, in the UEFI Common Platform Error Record format |
-| `sysfs.rs` | copies boot timings and firmware versions from `/sys` |
-| `gather.rs` | step 1 |
-| `archive.rs` | the archive as found at the start of a run |
-| `merge.rs` | the key of each log line, the pairing of a file log with a memory log, the rows of one run, and the checks before any purge |
-| `plan.rs` | step 2 |
-| `rows.rs` | the two files the keeper reads back, `firmware.log` and `sources.tsv` |
-| `disk.rs` | reads that tell a missing file from a failure, and writes that are flushed, read back and compared |
-| `time.rs` | dates to the millisecond, since the standard library has no calendar |
-| `config.rs` | the `FWLK_*` settings and the output lines |
-| `keeper.rs` | steps 3 and 4 |
+| `archive_reader.rs` | reads the archive as found at the start of a run |
+| `dates.rs` | dates and times to the millisecond, since the standard library has no calendar |
+| `firmware_error_record.rs` | decodes an error record the firmware stores, in the UEFI Common Platform Error Record format |
+| `firmware_log_file.rs` | reads one `UEFI_Log<n>.txt` the firmware writes on the EFI partition |
+| `firmware_memory_log.rs` | reads the log the firmware keeps in memory (Project Mu's Advanced Logger buffer), through `/dev/mem` |
+| `firmware_timings_and_versions.rs` | copies the boot timings and firmware versions Linux shows in `/sys` |
+| `log_format.rs` | writes and reads back the two files of a run folder, `firmware.log` and `sources.tsv` |
+| `merge_logs.rs` | the key of each log line, the pairing of a file log with a memory log, the rows of one run, and the checks before any purge |
+| `output.rs` | the lines the keeper prints |
+| `safe_files.rs` | reads that tell a missing file from a failure, and writes that are flushed, read back and compared |
+| `settings.rs` | the `FWLK_*` settings |
+| `step1_collect.rs` to `step4_purge.rs` | the four steps above |
+| `firmware-log-keeper/src/main.rs` | the keeper: runs the four steps |
 | `firmware-log-report/src/main.rs` | the report |
 
-The report reads the archive with `rows.rs`, `archive.rs` and `time.rs`, and decodes dumps with `advlog.rs`, so the two programs cannot disagree on a format. Those modules are public for that reason only; they are not a stable interface.
+The report reads the archive with `log_format.rs`, `archive_reader.rs` and `dates.rs`, and decodes dumps with `firmware_memory_log.rs`, so the two programs cannot disagree on a format. The modules are public so that both programs can use them; they are not a stable interface.
 
 ## Design decisions
 

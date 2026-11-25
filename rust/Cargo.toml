@@ -1,5 +1,5 @@
 [workspace]
-members = ["fwlk", "firmware-log-keeper", "firmware-log-report"]
+members = ["firmware_logs", "firmware-log-keeper", "firmware-log-report"]
 resolver = "2"
 
 [profile.release]

@@ -1,25 +1,26 @@
-//! firmware-log-keeper, the keeper of SPEC.md sections 1 to 7.
+//! The keeper of SPEC.md sections 1 to 7, as a library, and the formats the report shares with it.
 //!
-//! A keeper run gathers what the firmware left (gather), reads the archive (archive), decides what to write and
-//! delete (plan), then writes the archive and purges what it holds (keeper). It stores facts and never judges the
-//! content of the logs.
+//! A keeper run collects what the firmware left (step1_collect), reads the archive (archive_reader), plans what to
+//! write and delete (step2_plan), writes (step3_write), then purges what the archive now holds (step4_purge). The
+//! keeper program runs the steps in order. It stores facts and never judges the content of the logs. The modules
+//! are public so that both programs can use them; they are not a stable interface.
 #![forbid(unsafe_code)]
 
-pub mod advlog;
-pub mod archive;
-mod config;
-mod cper;
-mod disk;
-mod filelog;
-mod gather;
-mod keeper;
-mod merge;
-mod plan;
-pub mod rows;
-mod sysfs;
-pub mod time;
-
-pub use keeper::main;
+pub mod archive_reader;
+pub mod dates;
+pub mod firmware_error_record;
+pub mod firmware_log_file;
+pub mod firmware_memory_log;
+pub mod firmware_timings_and_versions;
+pub mod log_format;
+pub mod merge_logs;
+pub mod output;
+pub mod safe_files;
+pub mod settings;
+pub mod step1_collect;
+pub mod step2_plan;
+pub mod step3_write;
+pub mod step4_purge;
 
 use std::io;
 
@@ -144,14 +145,14 @@ mod tests {
             if next() % 3 == 0 {
                 data.truncate(next() as usize % (data.len() + 1));
             }
-            let _ = crate::advlog::decode(&data);
-            let _ = crate::cper::decode(&data, "0123456789abcdef");
-            let file = crate::filelog::FileLog::parse(&data);
-            let _ = (crate::merge::file_keys(&file, true), file.clock());
-            let _ = crate::rows::parse_log(&data).map(|rows| crate::merge::memory_lines(&rows));
-            let _ = crate::rows::Listing::parse(&data);
+            let _ = crate::firmware_memory_log::decode(&data);
+            let _ = crate::firmware_error_record::decode(&data, "0123456789abcdef");
+            let file = crate::firmware_log_file::FileLog::parse(&data);
+            let _ = (crate::merge_logs::file_keys(&file, true), file.clock());
+            let _ = crate::log_format::parse_log(&data).map(|rows| crate::merge_logs::memory_lines(&rows));
+            let _ = crate::log_format::Listing::parse(&data);
             let text = String::from_utf8_lossy(&data);
-            let _ = crate::time::Time::parse_utc(&text);
+            let _ = crate::dates::Time::parse_utc(&text);
             let _ = crate::number(&text);
         }
     }

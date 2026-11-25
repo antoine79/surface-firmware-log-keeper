@@ -1,5 +1,5 @@
 //! File log: one UEFI_Log<n>.txt of the EFI partition (SPEC 1.2).
-use crate::time::Time;
+use crate::dates::Time;
 use crate::{digits, latin1, norm};
 
 const MARK: &[u8] = b"=== END_OF_LOG ===";

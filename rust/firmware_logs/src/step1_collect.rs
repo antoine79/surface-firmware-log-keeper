@@ -4,13 +4,13 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use crate::advlog::{self, MemLine};
-use crate::config::{Config, Output};
-use crate::cper::{self, Record};
-use crate::disk::{append, at, keep_copy, list, make_dirs, put, read_or_none, read_untouched};
-use crate::filelog::{self, FileLog};
-use crate::merge::begins;
-use crate::{is_hex, latin1, sha16, squeeze, sysfs};
+use crate::firmware_memory_log::{self, MemLine};
+use crate::{output::Output, settings::Config};
+use crate::firmware_error_record::{self, Record};
+use crate::safe_files::{append, at, keep_copy, list, make_dirs, put, read_or_none, read_untouched};
+use crate::firmware_log_file::{self, FileLog};
+use crate::merge_logs::begins;
+use crate::{is_hex, latin1, sha16, squeeze, firmware_timings_and_versions};
 
 const LOCATOR: &str = "AdvLoggerLocator-4d60cfb5-f481-4a98-9c81-bff86460c43e";
 const RECORD_GUID: &str = "-414e6bdd-e47b-47cc-b244-bb61020cf516";
@@ -111,8 +111,8 @@ fn stage(cfg: &Config, folder: &Path, out: &mut Output) {
         _ => Ok(None),
     });
     keep(out, "memory", "advlog.bin", memory);
-    for (step, name, root, data) in [("fpdt", "fpdt-boot.txt", &cfg.fpdt, sysfs::fpdt(&cfg.fpdt)),
-                                     ("esrt", "esrt.txt", &cfg.esrt, sysfs::esrt(&cfg.esrt))] {
+    for (step, name, root, data) in [("fpdt", "fpdt-boot.txt", &cfg.fpdt, firmware_timings_and_versions::fpdt(&cfg.fpdt)),
+                                     ("esrt", "esrt.txt", &cfg.esrt, firmware_timings_and_versions::esrt(&cfg.esrt))] {
         if let Ok(None) = data {
             out.skipped(step, format!("nothing in {}", root.display()));
         }
@@ -126,7 +126,7 @@ fn memory(cfg: &Config, out: &mut Output) -> io::Result<Option<Vec<u8>>> {
         out.skipped("memory", "no AdvLoggerLocator variable");
         return Ok(None);
     };
-    match advlog::read_live(&cfg.devmem, &locator) {
+    match firmware_memory_log::read_live(&cfg.devmem, &locator) {
         Err(e) if e.kind() != io::ErrorKind::InvalidData => {
             out.skipped("memory", e); // no /dev/mem, or not readable: the source is missing on this machine
             Ok(None)
@@ -139,7 +139,7 @@ fn memory(cfg: &Config, out: &mut Output) -> io::Result<Option<Vec<u8>>> {
 /// so only if the read begins with every one of them (3.1).
 fn replaces(folder: &Path, data: &[u8], out: &mut Output) -> io::Result<bool> {
     let Some(old) = read_or_none(&folder.join("advlog.bin"))? else { return Ok(true) };
-    let (new, staged) = (advlog::decode(data)?.0, advlog::decode(&old)?.0);
+    let (new, staged) = (firmware_memory_log::decode(data)?.0, firmware_memory_log::decode(&old)?.0);
     if begins(&new, &staged) {
         return Ok(true);
     }
@@ -153,7 +153,7 @@ fn replaces(folder: &Path, data: &[u8], out: &mut Output) -> io::Result<bool> {
 fn read_staged(path: PathBuf, boot: String) -> io::Result<Staged> {
     let read = |name: &str| read_or_none(&path.join(name)).map(|d| d.filter(|d| !d.is_empty()));
     let dump = read_or_none(&path.join("advlog.bin"))?.map(|raw| -> io::Result<Dump> {
-        let (lines, undecoded) = advlog::decode(&raw).map_err(at(&path.join("advlog.bin")))?;
+        let (lines, undecoded) = firmware_memory_log::decode(&raw).map_err(at(&path.join("advlog.bin")))?;
         Ok(Dump { hash: sha16(&raw), raw, lines, undecoded })
     }).transpose()?;
     Ok(Staged { fpdt: read("fpdt-boot.txt")?, esrt: read("esrt.txt")?, path, boot, dump })
@@ -187,7 +187,7 @@ pub fn file_logs(cfg: &Config, out: &mut Output) -> Vec<SeenFile> {
 
 fn file_log(cfg: &Config, dir: &Path, slot: &str, index: &str, out: &mut Output) -> io::Result<Option<SeenFile>> {
     let Some(data) = read_untouched(&dir.join(slot))? else { return Ok(None) };
-    let content = filelog::content(&data);
+    let content = firmware_log_file::content(&data);
     if content.is_empty() {
         out.skipped(slot, "no content");
         return Ok(None);
@@ -249,5 +249,5 @@ fn record(cfg: &Config, var: &str, out: &mut Output) -> io::Result<Option<Record
         }
         Err(e) => return Err(e),
     }
-    Ok(Some(cper::decode(&raw, &hash)))
+    Ok(Some(firmware_error_record::decode(&raw, &hash)))
 }

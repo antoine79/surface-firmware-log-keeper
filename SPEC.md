@@ -192,11 +192,11 @@ Thresholds, wording and output formats of the report can change freely without t
 ## 9. Packaging
 
 ```
-README.md, SPEC.md, TEST-SCENARIOS.md
+README.md, SPEC.md, DESIGN.md, TEST-SCENARIOS.md
 tests/                        the pytest suite, synthetic fixtures only; runs the keeper named by FWLK_BIN
   test_realdata.py            optional, runs only when FWLK_REALDATA points to a local snapshot
 rust/                         Cargo workspace; the standard library and sha2 only, no unsafe code
-  fwlk/                       library crate: the keeper, and the decoders the report shares
+  firmware_logs/              library: the keeper's four steps, and the formats the report shares
   firmware-log-keeper/        the keeper binary: one command, a run
   firmware-log-report/        the report binary (section 8)
 systemd/firmware-log-keeper.service   the unit below

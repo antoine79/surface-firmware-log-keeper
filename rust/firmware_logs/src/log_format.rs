@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::{Display, Write};
 use std::io;
 
-use crate::time::Time;
+use crate::dates::Time;
 use crate::{bad, is_hex, number};
 
 pub const COLUMNS: &str = "time\tuptime_s\tseg\tlevel\tsource\tmem_line\tfile_line\tmessage\n";

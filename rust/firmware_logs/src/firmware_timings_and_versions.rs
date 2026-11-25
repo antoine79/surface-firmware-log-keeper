@@ -3,7 +3,7 @@ use std::fs;
 use std::io;
 use std::path::Path;
 
-use crate::disk::{at, list};
+use crate::safe_files::{at, list};
 use crate::SPACE;
 
 fn value(path: &Path) -> io::Result<String> {

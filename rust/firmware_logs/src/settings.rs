@@ -1,10 +1,9 @@
-//! The settings of SPEC 6, and the keeper's output of SPEC 5.
-use std::fmt::Display;
-use std::io::{self, Write};
+//! The settings of SPEC 6.
+use std::io;
 use std::path::{Component, Path, PathBuf};
 
-use crate::time::Time;
-use crate::{bad, is_hex, squeeze, SPACE};
+use crate::dates::Time;
+use crate::{bad, is_hex, SPACE};
 
 pub struct Config {
     pub memory_root: PathBuf,
@@ -99,25 +98,4 @@ fn resolved(path: &Path) -> PathBuf {
         }
     }
     out
-}
-
-/// Standard output only (the journal): what was done, what was skipped, what failed.
-#[derive(Default)]
-pub struct Output {
-    pub failed: bool,
-}
-
-impl Output {
-    pub fn say(&self, text: impl Display) {
-        let _ = writeln!(io::stdout().lock(), "{}", squeeze(&text.to_string(), &SPACE)); // output nobody reads is dropped
-    }
-
-    pub fn skipped(&self, source: &str, reason: impl Display) {
-        self.say(format!("skipped {source}: {reason}"));
-    }
-
-    pub fn error(&mut self, step: &str, what: impl Display) {
-        self.failed = true;
-        self.say(format!("error: {step}: {what}"));
-    }
 }

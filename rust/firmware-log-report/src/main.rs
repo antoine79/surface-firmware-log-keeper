@@ -6,9 +6,9 @@ use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
-use fwlk::advlog;
-use fwlk::archive::{folder_key, FILE_ONLY};
-use fwlk::rows::{parse_log, Listing, Row, Source};
+use firmware_logs::firmware_memory_log;
+use firmware_logs::archive_reader::{folder_key, FILE_ONLY};
+use firmware_logs::log_format::{parse_log, Listing, Row, Source};
 
 /// println! that stops the report, exit status 1, when its output cannot be written (a reader such as `head` that
 /// went away, a full disk) instead of panicking.
@@ -194,7 +194,7 @@ fn records(runs: &[Run], unattached: &[Row], merged: &Path, errors: &mut Errors)
     }
     let rows = runs.iter().flat_map(|r| r.rows.iter().map(move |row| (r.name.as_str(), row)))
         .chain(unattached.iter().map(|row| ("unattached", row)));
-    let mut list: Vec<(Option<fwlk::time::Time>, String, String)> = Vec::new();
+    let mut list: Vec<(Option<firmware_logs::dates::Time>, String, String)> = Vec::new();
     let mut with_row = std::collections::HashSet::new();
     for (place, row) in rows {
         if let Some(hash) = row.source.record() {
@@ -327,7 +327,7 @@ fn decode(file: &str) -> i32 {
             return 1;
         }
     };
-    match advlog::decode(&data) {
+    match firmware_memory_log::decode(&data) {
         Ok((lines, skipped)) => {
             say!("time\tuptime_s\tlevel\tmessage");
             for l in lines {

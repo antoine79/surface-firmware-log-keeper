@@ -2,7 +2,7 @@
 //!
 //! Layouts: UEFI specification appendix N (CPER), mu_plus MsWheaPkg/Include/Guid/MuTelemetryCperSection.h.
 use crate::le;
-use crate::time::Time;
+use crate::dates::Time;
 
 /// An error record as its row shows it.
 #[derive(Clone, Debug, PartialEq)]

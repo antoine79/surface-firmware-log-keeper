@@ -3,12 +3,12 @@ use std::cmp::Reverse;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::io;
 
-use crate::advlog::MemLine;
+use crate::firmware_memory_log::MemLine;
 use crate::bad;
-use crate::cper::Record;
-use crate::filelog::{untag, FileLog};
-use crate::rows::{Row, Source};
-use crate::time::Time;
+use crate::firmware_error_record::Record;
+use crate::firmware_log_file::{untag, FileLog};
+use crate::log_format::{Row, Source};
+use crate::dates::Time;
 
 /// A row key of 3.3: (segment, uptime ms, text, occurrence).
 pub type Key = (u64, i64, String, u32);

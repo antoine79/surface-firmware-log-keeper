@@ -50,18 +50,18 @@ dependencies = [
 name = "firmware-log-keeper"
 version = "0.1.0"
 dependencies = [
- "fwlk",
+ "firmware_logs",
 ]
 
 [[package]]
 name = "firmware-log-report"
 version = "0.1.0"
 dependencies = [
- "fwlk",
+ "firmware_logs",
 ]
 
 [[package]]
-name = "fwlk"
+name = "firmware_logs"
 version = "0.1.0"
 dependencies = [
  "sha2",

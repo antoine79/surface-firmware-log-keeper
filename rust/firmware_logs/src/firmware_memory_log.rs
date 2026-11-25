@@ -5,8 +5,8 @@ use std::fs::File;
 use std::io::{self, Read, Seek, SeekFrom};
 use std::path::Path;
 
-use crate::disk::at;
-use crate::time::Time;
+use crate::safe_files::at;
+use crate::dates::Time;
 use crate::{bad, latin1, le, norm};
 
 /// One log line: uptime in ms, firmware-clock time, debug level, text.

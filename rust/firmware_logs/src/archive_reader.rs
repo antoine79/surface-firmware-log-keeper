@@ -4,11 +4,11 @@ use std::collections::BTreeMap;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use crate::config::{Config, Output};
-use crate::cper::{self, Record};
-use crate::disk::{at, list, read_or_none};
-use crate::filelog::FileLog;
-use crate::rows::{parse_log, Listing, Source};
+use crate::{output::Output, settings::Config};
+use crate::firmware_error_record::{self, Record};
+use crate::safe_files::{at, list, read_or_none};
+use crate::firmware_log_file::FileLog;
+use crate::log_format::{parse_log, Listing, Source};
 use crate::{bad, digits, is_hex, sha16};
 
 pub const FILE_ONLY: &str = "fileonly-";
@@ -74,7 +74,7 @@ impl<'c> Archive<'c> {
     }
 
     pub fn record(&self, hash: &str) -> io::Result<Record> {
-        Ok(cper::decode(&self.raw(self.cfg.merged_root.join("hwerrrec").join(format!("{hash}.bin")), hash)?, hash))
+        Ok(firmware_error_record::decode(&self.raw(self.cfg.merged_root.join("hwerrrec").join(format!("{hash}.bin")), hash)?, hash))
     }
 
     /// The keys of the run folders whose sources.tsv lists what `lists` looks for.
