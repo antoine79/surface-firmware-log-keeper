@@ -1,4 +1,4 @@
-# firmware-log-keeper
+# Surface firmware log keeper
 
 Keeps the logs that Project Mu UEFI firmware (Microsoft Surface and other Mu-based machines) leaves behind, which no Linux distribution saves today. It runs once per Linux boot as root, copies what the firmware left, merges it into one log per firmware run, and frees the firmware's error-record storage once each record is safely archived. It collects and stores; it never judges the content of the logs.
 
@@ -6,8 +6,8 @@ Keeps the logs that Project Mu UEFI firmware (Microsoft Surface and other Mu-bas
 
 ## What it reads
 
-- the memory log of the current boot (the Advanced Logger buffer in RAM, read through `/dev/mem`);
-- the file logs `UEFI_Log1.txt` to `UEFI_Log9.txt` in the `UefiLogs` folder of the EFI partition, which it only ever reads;
+- the memory log of the current boot (the Advanced Logger buffer in RAM, read through `/dev/mem`, or through the firmware's log variables when a kernel in lockdown mode refuses `/dev/mem`);
+- the file logs `UEFI_Log1.txt` to `UEFI_Log9.txt` in the `UefiLogs` folder of the EFI partition, which it only ever reads (the firmware writes them only if that folder exists: see Install);
 - the error records, UEFI variables `HwErrRec<nnnn>-414e6bdd-e47b-47cc-b244-bb61020cf516`;
 - the boot timings (`/sys/firmware/acpi/fpdt/boot`) and firmware versions (`/sys/firmware/efi/esrt/entries`).
 
@@ -59,6 +59,8 @@ sudo ./install.sh install
 ```
 
 This copies the keeper to `/usr/local/sbin/firmware-log-keeper`, the report to `/usr/local/bin/firmware-log-report` and the unit `systemd/firmware-log-keeper.service` to `/etc/systemd/system/`, enables it and runs it once. `sudo ./install.sh status` shows what the last run did; `sudo ./install.sh undo` removes the unit and both programs and keeps the archive under `/var/log`.
+
+**Turning on the firmware's log files.** Surface firmware writes a log file at each boot only if a folder named `UefiLogs` exists at the root of the EFI partition, and it does not create one. `sudo ./install.sh file-logs` creates the empty folder (it checks that the 37 MB the files can take at most are free), and the firmware fills it from the next boot. The folder is optional: without it the keeper still saves the memory log, the error records, timings and versions, but a firmware run that never reaches Linux leaves no log of its own, because its memory log is lost at the next reset; only its error records remain. Undo: `sudo rm -r /boot/efi/UefiLogs` (or wherever your EFI partition is mounted); the keeper has already copied the files. The EFI partition is shared with Windows and the firmware; this is the only write to it, and you make it yourself.
 
 The keeper deletes the firmware's error records once they are archived (see above): that is how the firmware's small record store (11 slots on a Surface Book 2) gets room for new ones. If you want the records left in the firmware, do not install it.
 

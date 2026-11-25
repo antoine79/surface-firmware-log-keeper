@@ -32,7 +32,7 @@ The code is in the library `rust/firmware_logs`; each program is one `main.rs` t
 | `dates.rs` | dates and times to the millisecond, since the standard library has no calendar |
 | `firmware_error_record.rs` | decodes an error record the firmware stores, in the UEFI Common Platform Error Record format |
 | `firmware_log_file.rs` | reads one `UEFI_Log<n>.txt` the firmware writes on the EFI partition |
-| `firmware_memory_log.rs` | reads the log the firmware keeps in memory (Project Mu's Advanced Logger buffer), through `/dev/mem` |
+| `firmware_memory_log.rs` | reads the log the firmware keeps in memory (Project Mu's Advanced Logger buffer), through `/dev/mem` or the firmware's log variables |
 | `firmware_timings_and_versions.rs` | copies the boot timings and firmware versions Linux shows in `/sys` |
 | `log_format.rs` | writes and reads back the two files of a run folder, `firmware.log` and `sources.tsv` |
 | `merge_logs.rs` | the key of each log line, the pairing of a file log with a memory log, the rows of one run, and the checks before any purge |
@@ -63,6 +63,8 @@ The report reads the archive with `log_format.rs`, `archive_reader.rs` and `date
 
 **The standard library, one dependency, no unsafe code.** The one dependency is `sha2`. The kernel marks most UEFI variables immutable, and clearing that flag needs a system call the standard library does not offer, so the keeper runs `chattr -i` before deleting a record.
 
+**Two ways to the memory log.** `/dev/mem` comes first: it is what the keeper was proven on. A kernel in lockdown mode, which some distributions turn on with Secure Boot, refuses it, and the memory log is what ties a file log to its Linux boot: without it every run would look like one that never reached Linux. So the keeper then reads the same bytes through variables the firmware offers for this, which lockdown does not block (SPEC 1.1).
+
 **Settings are environment variables only.** They let the tests point every path at a scratch folder; a real machine needs none.
 
 **The keeper prints facts, one per line, and raises no alert.** Its output goes to the system journal. Interpreting the logs is the report's job.
@@ -74,5 +76,4 @@ The tests are black-box, so they do not depend on how the code is written. Pytho
 ## Known limits
 
 - **Checked on one machine**, a Surface Book 2 13" under Fedora.
-- **A kernel in lockdown mode refuses `/dev/mem`.** Some distributions turn lockdown on with Secure Boot. The keeper would then skip the memory log, and every new run would appear as known by its file log only. Not tested: this laptop runs with Secure Boot off.
 - **The timeline follows the firmware clock**, so changing the clock reorders runs around the change.

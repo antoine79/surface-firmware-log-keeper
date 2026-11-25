@@ -20,6 +20,7 @@ from pathlib import Path
 
 HWERR_GUID = "414e6bdd-e47b-47cc-b244-bb61020cf516"
 LOCATOR_VAR = "AdvLoggerLocator-4d60cfb5-f481-4a98-9c81-bff86460c43e"
+LOG_VAR_GUID = "a021bf2b-34ed-4a98-859c-420ef94f3e94"  # the memory log as variables V0, V1, ... (SPEC 1.1)
 SUPPORT_VAR = "HwErrRecSupport-8be4df61-93ca-11d2-aa0d-00e098032b8c"
 MU_TELEMETRY = uuid.UUID("85183a8b-9c41-429c-939c-5c3c087ca280")
 COMPONENT = uuid.UUID("11111111-2222-3333-4444-555555555555")
@@ -186,6 +187,14 @@ class MemLog:
             f.seek(self.addr)
             f.write(self.buffer() + b"\xee" * 64)  # bytes past the write position must not be read
         (efivars / LOCATOR_VAR).write_bytes(struct.pack("<IQ", 6, self.addr))
+
+    def write_variables(self, efivars: Path, block: int = 1 << 20, unused: int = 0, drop_last: bool = False) -> None:
+        """The log variables V0, V1, ...: the buffer cut in blocks, each file led by 4 attribute bytes as in efivars.
+        `unused` bytes past the write position model newer firmware, which hands out the whole buffer."""
+        data = self.buffer() + b"\xee" * unused
+        blocks = [data[i:i + block] for i in range(0, len(data), block)]
+        for n, b in enumerate(blocks[:-1] if drop_last else blocks):
+            (efivars / f"V{n}-{LOG_VAR_GUID}").write_bytes(struct.pack("<I", 6) + b)
 
 
 # ---------------------------------------------------------------------------------------------------------------

@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 
 from builders import tree
-from conftest import RECORD_VAR_RE, keeper_bin
+from conftest import LOG_VAR_RE, RECORD_VAR_RE, keeper_bin
 
 SNAPSHOT = os.environ.get("FWLK_REALDATA")
 pytestmark = pytest.mark.skipif(not SNAPSHOT, reason="FWLK_REALDATA is not set")
@@ -50,7 +50,9 @@ def test_J1_real_archive(tmp_path):
     after = {**tree(root / "firmware"), **{f"bootefi/{k}": v for k, v in tree(root / "firmware_bootefilogs").items()}}
 
     assert {k: v for k, v in after.items() if k.endswith("firmware.log")} == logs  # not one byte changed
-    left = {p.name: p.read_bytes() for p in (root / "efivars").iterdir()}
+    # an empty log-variable entry is what reading one leaves in a plain folder; efivarfs drops it at close
+    left = {p.name: p.read_bytes() for p in (root / "efivars").iterdir()
+            if not (LOG_VAR_RE.fullmatch(p.name) and p.stat().st_size == 0)}
     assert left == {name: data for name, data in variables.items() if name not in records}  # the records, and only they
     assert len(left) == 2
     assert [p.stat().st_atime_ns for p in uefilogs] == accessed  # before reading them here

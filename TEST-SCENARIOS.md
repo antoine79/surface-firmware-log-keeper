@@ -67,7 +67,7 @@ Each scenario is a sequence of simulated boots on scratch directories: fake firm
 
 ## F. Missing sources and errors
 
-- F1. No firmware memory log (no locator variable, or `/dev/mem` not readable): skipped with one message, the other sources processed. When the memory log is readable at a later run, the `fileonly-` folder keeps its file log and records, and the boot's folder, under its first name, gets the memory lines.
+- F1. No firmware memory log (no locator variable, or neither `/dev/mem` nor the log variables readable): skipped with one message, the other sources processed. Without `/dev/mem`, the log read through the log variables (one block, many blocks, the whole buffer handed out) gives the same run folder; variables that end before the write position are an error, and the other sources are still processed. When the memory log is readable at a later run, the `fileonly-` folder keeps its file log and records, and the boot's folder, under its first name, gets the memory lines.
 - F2. No `UefiLogs` folder, or no EFI partition mounted: skipped with one message. An unreadable `UEFI_Index.txt`: reported, the file logs archived with `-` as index, the other sources processed.
 - F3. No error records, no boot timings, no firmware versions: skipped quietly or with one message each.
 - F4. One step raises an error: the other steps still run, exit status 1.
@@ -77,7 +77,7 @@ Each scenario is a sequence of simulated boots on scratch directories: fake firm
 ## H. Standing rules, checked after every scenario
 
 - H1. The `UefiLogs` folder is byte-for-byte unchanged (hash of the whole tree before and after), and no access time of its files is updated.
-- H2. No variable other than archived `HwErrRec<nnnn>` records was deleted.
+- H2. No variable other than archived `HwErrRec<nnnn>` records was deleted, none was changed, and none was created but the empty entries a read of a log variable leaves (SPEC 1.1).
 - H3. Every line of every source appears in the merged log exactly once. A run with a memory log has `both`, `memory` and `errrec` rows only; a file-only run has `bootefi` and `errrec` rows only.
 - H4. No duplicate boot folders, no duplicate archive files.
 - H5. The staging folder is empty after a successful run.

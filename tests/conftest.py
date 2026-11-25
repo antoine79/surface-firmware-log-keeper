@@ -18,7 +18,7 @@ from pathlib import Path
 
 import pytest
 
-from builders import (HWERR_GUID, LOCATOR_VAR, PAD_BYTES, SUPPORT_VAR, FileLog, MemLog, Record, Row, esrt_text,
+from builders import (HWERR_GUID, LOCATOR_VAR, LOG_VAR_GUID, PAD_BYTES, SUPPORT_VAR, FileLog, MemLog, Record, Row, esrt_text,
                       fpdt_text, log_bytes, merge, norm, parse_content, parse_log, record_var, sha16, sort_key,
                       unattached_key, untag, uptime_ms, utc_stamp, write_sysfs)
 
@@ -26,6 +26,7 @@ DEFAULT_BIN = Path(__file__).resolve().parents[1] / "rust" / "target" / "release
 
 KEY = r"[0-9a-f]{32}|fileonly-[0-9a-f]{16}"
 FOLDER_RE = re.compile(rf"([0-9]{{4}}-[0-9]{{2}}-[0-9]{{2}}T[0-9]{{6}})_({KEY})")
+LOG_VAR_RE = re.compile(rf"V\d+-{LOG_VAR_GUID}")
 RECORD_VAR_RE = re.compile(rf"HwErrRec[0-9A-Fa-f]{{4}}-{HWERR_GUID}")
 MERGED_RE = re.compile(rf"merged run (?P<key>{KEY}) into (?P<folder>\S+) "
                        r"\(memory (?P<mem>\d+) lines, bootefi (?P<file>\d+) lines, errrec (?P<rec>\d+)\)")
@@ -201,6 +202,8 @@ class Machine:
         self.memory_ok = linux
         self.devmem.unlink(missing_ok=True)
         (self.efivars / LOCATOR_VAR).unlink(missing_ok=True)
+        for p in self.efivars.glob(f"V*-{LOG_VAR_GUID}"):
+            p.unlink()
         if linux:
             mem.write(self.devmem, self.efivars)
             write_sysfs(self.fpdt, self.esrt, run.n)
@@ -279,7 +282,7 @@ class Machine:
         accessed = [p.stat().st_atime_ns for p in self._esp_files()]
         mem = self.current.mem if self.current and self.current.boot_id == boot_id else None
         if (not args and mem and self.memory_ok and (self.efivars / LOCATOR_VAR).exists()
-                and os.access(self.devmem, os.R_OK)):
+                and (os.access(self.devmem, os.R_OK) or (self.efivars / f"V0-{LOG_VAR_GUID}").exists())):
             self.memory_seen[boot_id] = mem
         p = subprocess.run([*exe, *map(str, args)], env=full, capture_output=True, timeout=600)
         result = Result(p.returncode, p.stdout.decode("utf-8", "replace"), p.stderr.decode("utf-8", "replace"), now, boot_id)
@@ -296,7 +299,9 @@ class Machine:
                     self.violations.append(f"H2: {name} was deleted without being an archived error record")
             elif vars_after[name] != data:
                 self.violations.append(f"H2: {name} was modified")
-        self.violations += [f"H2: {name} was created" for name in vars_after.keys() - vars_before.keys()]
+        # reading a log variable leaves an empty entry in efivars, which the kernel drops at close (SPEC 1.1)
+        self.violations += [f"H2: {name} was created" for name in vars_after.keys() - vars_before.keys()
+                            if not (LOG_VAR_RE.fullmatch(name) and vars_after[name] == b"")]
         if twin:  # after the checks of H1: comparing reads the EFI partition
             self._parity_check(twin, p, [*map(str, args)], full)
         assert result.rc == expect, f"expected exit status {expect}\n{result}"

@@ -45,6 +45,34 @@ def test_F1_no_memory_log(machine, how):
     machine.check()
 
 
+@pytest.mark.parametrize("block, unused", [(1 << 20, 0), (100, 0), (100, 5000)],
+                         ids=["one block", "many blocks", "whole buffer handed out"])
+def test_F1_memory_log_through_the_log_variables(machine, block, unused):
+    """SPEC 1.1: /dev/mem refused (a kernel in lockdown mode), the same log read through the variables V0, V1, ..."""
+    run = machine.firmware_run(boot_lines("a"), reset=T0)
+    machine.devmem.unlink()
+    run.mem.write_variables(machine.efivars, block=block, unused=unused)
+    res = machine.keeper()
+
+    assert res.starting("skipped memory: ") == [] and res.starting("error: ") == []
+    assert machine.folder_names() == [run.folder_name]
+    assert machine.log(run) == run.log()
+    machine.check()
+
+
+def test_F1_log_variables_that_end_early_are_an_error(machine):
+    """A last block missing: the log is not cut short, the source fails and the others still run."""
+    run = machine.firmware_run(boot_lines("a"), reset=T0)
+    machine.devmem.unlink()
+    run.mem.write_variables(machine.efivars, block=100, drop_last=True)
+    machine.memory_ok = False
+    res = machine.keeper(expect=1)
+
+    assert len(res.starting("error: memory: ")) == 1 and "short of the write position" in res.out
+    assert machine.log(f"fileonly-{run.file.hash}") == log_bytes(merge(None, run.file))
+    machine.check()
+
+
 def test_F1_memory_log_readable_at_a_later_run(machine):
     """SPEC 2.1: a fileonly- folder keeps its file log and its records when the memory log of that run is read
     later; the boot's folder, named after the first keeper run, gets the memory lines."""

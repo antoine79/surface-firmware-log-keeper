@@ -1,4 +1,4 @@
-# firmware-log-keeper: specification
+# Surface firmware log keeper: specification
 
 Two small programs for machines with Project Mu UEFI firmware (Microsoft Surface devices and other Mu-based machines), whose firmware logs no Linux distribution saves today.
 
@@ -15,7 +15,7 @@ Written in Rust (one binary per program), with a black-box test suite in Python 
 
 | Source | Where | Lifetime | Keeper action |
 |---|---|---|---|
-| **Memory log** | Advanced Logger buffer in reserved RAM; its physical address is in the UEFI variable `AdvLoggerLocator-4d60cfb5-f481-4a98-9c81-bff86460c43e` (bytes 4-11, little-endian u64, after the 4 attribute bytes); read through `/dev/mem` | emptied at every reset; holds the current run only | read, never written |
+| **Memory log** | Advanced Logger buffer in reserved RAM; its physical address is in the UEFI variable `AdvLoggerLocator-4d60cfb5-f481-4a98-9c81-bff86460c43e` (bytes 4-11, little-endian u64, after the 4 attribute bytes); read through `/dev/mem`, else through the firmware's log variables (1.1) | emptied at every reset; holds the current run only | read, never written |
 | **File log** | `<ESP>/UefiLogs/UEFI_Log<1-9>.txt` and `UEFI_Index.txt`, written by the firmware at the hand-over to the boot loader (only if the `UefiLogs` folder exists), one file per run | 9 files of 4 MB in rotation, overwritten oldest first | **read only. The keeper never writes, renames or deletes anything on the EFI partition**, and opens its files without updating their access time (`O_NOATIME`; a plain read if the system refuses that flag): that update would be a write to the partition |
 | **Error records** | UEFI variables `HwErrRec<4 hex digits>-414e6bdd-e47b-47cc-b244-bb61020cf516` (4 attribute bytes + CPER record) | the firmware takes the first free slot and never frees one; when all are taken, new errors are dropped | archived raw, then **deleted** once the archive copy matches byte for byte |
 | `HwErrRecSupport-8be4df61-93ca-11d2-aa0d-00e098032b8c` | UEFI variable | permanent | **never touched** |
@@ -29,6 +29,8 @@ Every source may be missing on a given machine: the keeper skips it, says so in 
 Layout from mu_plus `AdvLoggerPkg/Include/AdvancedLoggerInternal.h`: a header (signature `ALOG`), then entries `ALMS` or the newer `ALM2`. The header gives the timer frequency and one reading of the firmware clock (year to second) with the timer tick at which it was read; each entry gives a timer tick, a debug level (32-bit) and text. So every line has an uptime (tick × 1000 / frequency, rounded down to the millisecond, as the firmware does when it writes the file log) and a firmware-clock time (the clock reading, plus the line's tick minus the clock's tick, that difference converted and rounded down the same way). An entry's text may span several lines; each line is its own log line with the entry's tick and level. A line built from several entries takes the tick and level of the entry that ends it; a last line without a line break takes those of the last entry. (The firmware stamps its file log with the last one: on the Surface Book 2 data, 1 to 5 lines per boot fail to pair otherwise.) Text is read as Latin-1.
 
 The dump kept in staging, `advlog.bin`, is the header and the used entries: the bytes from the header's address to the write position. Its sha256 is the memory log's content hash.
+
+When `/dev/mem` is missing or refused (a kernel in lockdown mode, which some distributions turn on with Secure Boot, refuses it even to root), the keeper reads the same bytes through the variables the firmware offers for this (mu_basecore `VariableSmm.c`, mu_plus `AdvLoggerMmAccessLib.c`): `V0`, `V1`, ... under the vendor GUID `a021bf2b-34ed-4a98-859c-420ef94f3e94`, each one block of the buffer from its header on, after the 4 attribute bytes of every efivars file. The firmware lists none of them and refuses every write to them. The keeper opens each name read-only with `O_CREAT`, which makes efivarfs ask the firmware for it; the empty entry this leaves is dropped by the kernel when the file is closed. Reading stops at the write position, or at the first empty block (the firmware's answer past the end); blocks that end before the write position are an `error: memory:`. Newer firmware hands out the whole buffer, unused bytes included: those past the write position are not kept. Without `/dev/mem` and without `V0`, the memory log is skipped with one message. On the Surface Book 2 13" `V0` holds the whole log and its bytes equal those read from `/dev/mem`.
 
 The memory log is the only source with no raw copy in the archive, so the bytes of a dump that the decoder does not turn into lines are counted: the bytes skipped to reach the next `ALMS` or `ALM2` signature when what stands at an entry's place is not an entry the decoder knows, and the bytes left before the write position when it finds no further entry. The lines decoded are merged as usual. When that count is not zero, the dump is copied raw into the run folder as `advlog-<its hash>.bin` before its staging folder is removed, and the keeper run reports one `error: memory:` line giving the count and that file.
 
@@ -211,7 +213,7 @@ Nothing in the code is specific to one machine: no addresses, slot counts or dev
 ```
 [Unit]
 Description=Keep the firmware's own logs (Advanced Logger, UefiLogs, error records, boot timings, versions)
-Documentation=https://github.com/antoine79/firmware-log-keeper
+Documentation=https://github.com/antoine79/surface-firmware-log-keeper
 After=local-fs.target
 # the EFI partition is read from the first of these that holds UefiLogs
 RequiresMountsFor=/var/log /boot/efi /efi /boot

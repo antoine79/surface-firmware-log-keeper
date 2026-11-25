@@ -1,8 +1,9 @@
 //! Memory log: the Project Mu Advanced Logger buffer (SPEC 1.1).
 //!
 //! Layout from mu_plus AdvLoggerPkg/Include/AdvancedLoggerInternal.h.
-use std::fs::File;
+use std::fs::{File, OpenOptions};
 use std::io::{self, Read, Seek, SeekFrom};
+use std::os::unix::fs::OpenOptionsExt;
 use std::path::Path;
 
 use crate::safe_files::at;
@@ -57,6 +58,45 @@ pub fn read_live(devmem: &Path, locator: &[u8]) -> io::Result<Vec<u8>> {
     if dump.len() != end {
         return Err(bad(format!("short read at {addr:#x}: {} of {end} bytes", dump.len())));
     }
+    Ok(dump)
+}
+
+/// The identifier under which Project Mu firmware also hands out its memory log, as variables V0, V1, ... of
+/// one block each (mu_basecore VariableSmm.c and mu_plus AdvLoggerMmAccessLib.c). The firmware lists none of them
+/// and refuses every write to them.
+pub const LOG_VARIABLE_GUID: &str = "a021bf2b-34ed-4a98-859c-420ef94f3e94";
+const O_CREAT: i32 = 0o100; // Linux, every architecture this runs on
+
+/// The same dump as `read_live`, read through the log variables: the way in when a kernel in lockdown mode
+/// refuses /dev/mem. Opening a name with O_CREAT makes efivarfs ask the firmware for it; the kernel drops the
+/// empty entry this leaves when the file is closed. NotFound if the firmware does not offer the log this way.
+pub fn read_variables(efivars: &Path, locator: &[u8]) -> io::Result<Vec<u8>> {
+    let addr = field(locator, 4, 8)?;
+    let (mut dump, mut end) = (Vec::new(), None);
+    for n in 0.. {
+        if end.is_some_and(|e| dump.len() >= e) {
+            break;
+        }
+        let path = efivars.join(format!("V{n}-{LOG_VARIABLE_GUID}"));
+        // Rust's create() demands write access, which this must never ask for
+        let mut f = OpenOptions::new().read(true).custom_flags(O_CREAT).mode(0o600).open(&path).map_err(at(&path))?;
+        let mut block = Vec::new();
+        f.read_to_end(&mut block).map_err(at(&path))?;
+        if block.len() <= 4 {
+            break; // past the last block the firmware answers "not found", which efivarfs shows as an empty file
+        }
+        dump.extend_from_slice(&block[4..]); // a variable's file starts with its 4 bytes of attributes
+        if end.is_none() {
+            end = Some(bounds(&dump, Some(addr))?.1);
+        }
+    }
+    let Some(end) = end else {
+        return Err(io::Error::new(io::ErrorKind::NotFound, format!("no log variable V0-{LOG_VARIABLE_GUID}")));
+    };
+    if dump.len() < end {
+        return Err(bad(format!("log variables end at {} bytes, short of the write position {end}", dump.len())));
+    }
+    dump.truncate(end); // newer firmware hands out the whole buffer, unused bytes included
     Ok(dump)
 }
 

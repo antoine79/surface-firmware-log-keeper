@@ -120,17 +120,22 @@ fn stage(cfg: &Config, folder: &Path, out: &mut Output) {
     }
 }
 
-/// This boot's memory log, read through the locator variable and /dev/mem; None when the source is missing.
+/// This boot's memory log, found through the locator variable, read from /dev/mem or else from the log
+/// variables; None when the source is missing.
 fn memory(cfg: &Config, out: &mut Output) -> io::Result<Option<Vec<u8>>> {
     let Ok(locator) = fs::read(cfg.efivars.join(LOCATOR)) else {
         out.skipped("memory", "no AdvLoggerLocator variable");
         return Ok(None);
     };
+    // no /dev/mem, or refused (lockdown): try the firmware's log variables; missing both ways, the source is missing
     match firmware_memory_log::read_live(&cfg.devmem, &locator) {
-        Err(e) if e.kind() != io::ErrorKind::InvalidData => {
-            out.skipped("memory", e); // no /dev/mem, or not readable: the source is missing on this machine
-            Ok(None)
-        }
+        Err(e) if e.kind() != io::ErrorKind::InvalidData => match firmware_memory_log::read_variables(&cfg.efivars, &locator) {
+            Err(v) if v.kind() != io::ErrorKind::InvalidData => {
+                out.skipped("memory", format!("{e}; {v}"));
+                Ok(None)
+            }
+            r => r.map(Some),
+        },
         r => r.map(Some),
     }
 }

@@ -2,7 +2,7 @@
 name = "firmware_logs"
 version = "0.1.0"
 edition = "2024"
-description = "The firmware-log keeper of SPEC.md sections 1 to 7, as a library shared by the keeper and the report"
+description = "The Surface firmware log keeper of SPEC.md sections 1 to 7, as a library shared by the keeper and the report"
 license = "MIT"
 
 [dependencies]
