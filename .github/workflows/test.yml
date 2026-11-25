@@ -11,5 +11,5 @@ jobs:
       - run: rustup update stable && rustup default stable
       - run: cargo build --release && cargo test
         working-directory: rust
-      - uses: astral-sh/setup-uv@v10
+      - uses: astral-sh/setup-uv@v10.4.0
       - run: uv run --python 3.13 --with pytest pytest -q -p no:cacheprovider tests
