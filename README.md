@@ -53,6 +53,17 @@ The report tests run the `firmware-log-report` built beside the keeper, or the o
 
 ## Install
 
+Ready-built programs for x86-64 are attached to each [release](https://github.com/antoine79/surface-firmware-log-keeper/releases): statically linked, so they run on any distribution, and tested by the whole suite before they are published. Check the download, then install from its folder:
+
+```
+sha256sum -c surface-firmware-log-keeper-<version>-x86_64.tar.gz.sha256
+tar xzf surface-firmware-log-keeper-<version>-x86_64.tar.gz
+cd surface-firmware-log-keeper-<version>-x86_64
+sudo ./install.sh install
+```
+
+Or build it yourself from this repository:
+
 ```
 (cd rust && cargo build --release)
 sudo ./install.sh install

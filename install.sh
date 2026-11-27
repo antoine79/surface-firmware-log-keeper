@@ -1,5 +1,6 @@
 #!/bin/bash
-# Install, check or remove the Surface firmware log keeper. Run as root from the project folder, after building:
+# Install, check or remove the Surface firmware log keeper. Run as root from the project folder, after building
+# (or from the folder of a release download, which holds the programs ready-built in bin/):
 #   (cd rust && cargo build --release)
 #   sudo ./install.sh install | status | undo | file-logs
 # install  copies the keeper to /usr/local/sbin, the report to /usr/local/bin and the unit to /etc/systemd/system,
@@ -12,7 +13,8 @@ set -euo pipefail
 cd "$(dirname "$0")"
 BIN=/usr/local/sbin/firmware-log-keeper
 UNIT=/etc/systemd/system/firmware-log-keeper.service
-BUILT=rust/target/release/firmware-log-keeper
+# the programs: in bin/ of a release download, else the local build
+BUILT=$( [ -x bin/firmware-log-keeper ] && echo bin || echo rust/target/release )
 REPORT=/usr/local/bin/firmware-log-report
 
 [ "$(id -u)" = 0 ] || { echo "run with sudo"; exit 1; }
@@ -22,10 +24,10 @@ esp() { for d in /boot/efi /efi /boot; do [ "$(findmnt -n -o FSTYPE --mountpoint
 
 case "${1:-}" in
 install)
-	[ -x "$BUILT" ] && [ -x rust/target/release/firmware-log-report ] || { echo "build first: (cd rust && cargo build --release)"; exit 1; }
+	[ -x "$BUILT/firmware-log-keeper" ] && [ -x "$BUILT/firmware-log-report" ] || { echo "build first: (cd rust && cargo build --release)"; exit 1; }
 	[ -d /sys/firmware/efi ] || { echo "not booted in UEFI mode: nothing to keep"; exit 1; }
-	install -m 755 "$BUILT" "$BIN"
-	install -m 755 rust/target/release/firmware-log-report "$REPORT"
+	install -m 755 "$BUILT/firmware-log-keeper" "$BIN"
+	install -m 755 "$BUILT/firmware-log-report" "$REPORT"
 	install -m 644 systemd/firmware-log-keeper.service "$UNIT"
 	systemctl daemon-reload
 	systemctl enable firmware-log-keeper.service

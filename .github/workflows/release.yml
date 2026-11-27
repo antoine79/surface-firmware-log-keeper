@@ -1,0 +1,52 @@
+# When a version tag (v*) is pushed: build both programs statically, run every test on exactly those programs, then
+# publish them as a GitHub release with a checksum. No secrets but this job's own token, which may only add releases.
+name: release
+on:
+  push:
+    tags: ['v*']
+permissions:
+  contents: read
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      TARGET: x86_64-unknown-linux-musl
+      NAME: surface-firmware-log-keeper-${{ github.ref_name }}-x86_64
+    steps:
+      - uses: actions/checkout@v7
+      - run: rustup update stable && rustup default stable && rustup target add "$TARGET"
+      - run: cargo build --release --locked --target "$TARGET" && cargo test --locked
+        working-directory: rust
+      - name: The programs run on any distribution
+        run: file rust/target/$TARGET/release/firmware-log-{keeper,report} | tee /dev/stderr | grep -c 'static' | grep -qx 2
+      - uses: astral-sh/setup-uv@v10.4.0
+      - run: uv run --python 3.13 --with pytest pytest -q -p no:cacheprovider tests
+        env:
+          FWLK_BIN: ${{ github.workspace }}/rust/target/${{ env.TARGET }}/release/firmware-log-keeper
+          FWLK_REPORT_BIN: ${{ github.workspace }}/rust/target/${{ env.TARGET }}/release/firmware-log-report
+      - name: Package
+        run: |
+          mkdir -p "$NAME/bin" "$NAME/tests"
+          cp rust/target/$TARGET/release/firmware-log-{keeper,report} "$NAME/bin/"
+          cp -r systemd install.sh README.md SPEC.md DESIGN.md TEST-SCENARIOS.md LICENSE "$NAME/"
+          cp tests/guard_check.sh "$NAME/tests/"
+          tar czf "$NAME.tar.gz" "$NAME"
+          sha256sum "$NAME.tar.gz" > "$NAME.tar.gz.sha256"
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cat > notes.md <<EOF
+          Ready-built programs for x86-64 Linux, statically linked, tested by the whole suite before publishing.
+
+          \`\`\`
+          sha256sum -c $NAME.tar.gz.sha256
+          tar xzf $NAME.tar.gz && cd $NAME
+          sudo ./install.sh install
+          \`\`\`
+
+          The keeper deletes the firmware's error records once they are archived; read the README before installing.
+          EOF
+          gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --notes-file notes.md "$NAME.tar.gz" "$NAME.tar.gz.sha256"

@@ -23,7 +23,8 @@ BOOT=$(tr -d '-' < /proc/sys/kernel/random/boot_id)
 fails=0
 
 ls "$EFIVARS" | grep -q '^HwErrRec[0-9A-F]\{4\}-' && { echo "an error record is waiting in the firmware: let the keeper archive it first"; exit 1; }
-cmp -s rust/target/release/firmware-log-keeper "$KEEPER" || { echo "$KEEPER is not this build: sudo ./install.sh install first"; exit 1; }
+BUILT=$( [ -x bin/firmware-log-keeper ] && echo bin || echo rust/target/release )  # as install.sh finds it
+cmp -s "$BUILT/firmware-log-keeper" "$KEEPER" || { echo "$KEEPER is not this build: sudo ./install.sh install first"; exit 1; }
 REAL=$(ls -d /var/log/firmware/*_"$BOOT" 2>/dev/null) || { echo "no run folder for this boot in /var/log/firmware"; exit 1; }
 ESP=$(for d in /boot/efi /efi /boot; do [ -d "$d/UefiLogs" ] && { echo "$d"; break; }; done)
 [ -n "$ESP" ] || { echo "no UefiLogs folder on an EFI partition"; exit 1; }
