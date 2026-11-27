@@ -2,6 +2,8 @@
 by hand."""
 from datetime import datetime, timedelta
 
+from pathlib import Path
+
 import pytest
 
 from builders import COLUMNS, SLOT_SIZE, Entry, FileLog, L, MemLog, boot_lines, log_bytes, merge, parse_log, record
@@ -61,10 +63,11 @@ def test_expected_merge_agrees_with_rows_written_by_hand():
 
 def test_keeper_bin_is_an_absolute_path(monkeypatch):
     """A bare file name would be looked up in PATH by the system, where another program may have that name."""
-    from conftest import DEFAULT_BIN, keeper_bin
-    monkeypatch.chdir(DEFAULT_BIN.parent)
-    monkeypatch.setenv("FWLK_BIN", DEFAULT_BIN.name)
-    assert keeper_bin() == [str(DEFAULT_BIN)]
+    from conftest import keeper_bin
+    exe = Path(keeper_bin()[0])  # the keeper under test: FWLK_BIN, or the default build
+    monkeypatch.chdir(exe.parent)
+    monkeypatch.setenv("FWLK_BIN", exe.name)
+    assert keeper_bin() == [str(exe)]
 
 
 def test_expected_merge_of_a_tagged_file_log():
