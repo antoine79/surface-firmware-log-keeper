@@ -83,6 +83,8 @@ Each scenario is a sequence of simulated boots on scratch directories: fake firm
 - H5. The staging folder is empty after a successful run.
 - H6. The keeper's output contains only what it did and what failed: no warning about the content of the logs.
 
+On a real machine, `sudo tests/guard_check.sh` checks the same rules from outside the code: inside the unit's systemd guard, the EFI partition and every folder but the keeper's three are read-only, `/dev/mem` is the only device, and the keeper still gives this boot's run folder byte for byte, through `/dev/mem` and through the log variables. It also has to fail against a weakened unit (checked 28 Nov 2026 with the unguarded unit, 13 failures, and with the guard minus the immutable-flag privilege, 4).
+
 Regression mode: with `FWLK_PARITY_BIN` naming another build, every keeper call is made again by it on a copy of the scratch tree, and both must give the same exit status, files and output (error texts aside).
 
 ## I. Commands

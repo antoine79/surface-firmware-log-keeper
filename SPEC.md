@@ -196,33 +196,19 @@ Thresholds, wording and output formats of the report can change freely without t
 ```
 README.md, SPEC.md, DESIGN.md, TEST-SCENARIOS.md
 tests/                        the pytest suite, synthetic fixtures only; runs the keeper named by FWLK_BIN
+  guard_check.sh              checks the unit's guard on a real machine, as root (below)
   test_realdata.py            optional, runs only when FWLK_REALDATA points to a local snapshot
 rust/                         Cargo workspace; the standard library and sha2 only, no unsafe code
   firmware_logs/              library: the keeper's four steps, and the formats the report shares
   firmware-log-keeper/        the keeper binary: one command, a run
   firmware-log-report/        the report binary (section 8)
-systemd/firmware-log-keeper.service   the unit below
+systemd/firmware-log-keeper.service   the unit and its guard (below)
 install.sh                    install | status | undo, as root, from the project folder
 LICENSE                       MIT
 ```
 
 Both are built with `cargo build --release` in `rust/`; `install.sh` installs the keeper as `/usr/local/sbin/firmware-log-keeper` and the report as `/usr/local/bin/firmware-log-report`.
 
-Nothing in the code is specific to one machine: no addresses, slot counts or device names. The unit (`systemd/firmware-log-keeper.service`):
+Nothing in the code is specific to one machine: no addresses, slot counts or device names.
 
-```
-[Unit]
-Description=Keep the firmware's own logs (Advanced Logger, UefiLogs, error records, boot timings, versions)
-Documentation=https://github.com/antoine79/surface-firmware-log-keeper
-After=local-fs.target
-# the EFI partition is read from the first of these that holds UefiLogs
-RequiresMountsFor=/var/log /boot/efi /efi /boot
-
-[Service]
-Type=oneshot
-ExecStart=/usr/local/sbin/firmware-log-keeper
-Nice=10
-
-[Install]
-WantedBy=multi-user.target
-```
+The unit, `systemd/firmware-log-keeper.service`, runs the keeper once per boot (`Type=oneshot`, after the file systems that may hold `UefiLogs` are mounted) inside a systemd guard that enforces sections 1 and 4 from outside the code. The keeper can write only its three roots (created by systemd as log directories on a first install) and the efivars folder, where it deletes archived error records; everything else, the EFI partition included, is read-only to it. The only device it can open is `/dev/mem`, read-only; its privileges are reduced to reading raw memory and clearing the immutable flag of a variable; it has no network. `tests/guard_check.sh`, run as root on a real machine, checks each of these limits from inside the guard and runs the keeper inside it into a scratch archive, through `/dev/mem` and through the log variables, against this boot's run folder in the real archive. Moving a root with an `FWLK_*` setting needs the matching change to the unit's writable folders.

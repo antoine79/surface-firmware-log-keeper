@@ -65,6 +65,8 @@ The report reads the archive with `log_format.rs`, `archive_reader.rs` and `date
 
 **Two ways to the memory log.** `/dev/mem` comes first: it is what the keeper was proven on. A kernel in lockdown mode, which some distributions turn on with Secure Boot, refuses it, and the memory log is what ties a file log to its Linux boot: without it every run would look like one that never reached Linux. So the keeper then reads the same bytes through variables the firmware offers for this, which lockdown does not block (SPEC 1.1).
 
+**The rules are also enforced from outside the code.** The unit runs the keeper in a systemd guard: it can write only its three folders and the UEFI variables, and the EFI partition is read-only to it. A bug in the keeper then fails with an error instead of writing where it must not. `tests/guard_check.sh` checks the guard on a real machine, because the test suite runs the keeper outside systemd.
+
 **Settings are environment variables only.** They let the tests point every path at a scratch folder; a real machine needs none.
 
 **The keeper prints facts, one per line, and raises no alert.** Its output goes to the system journal. Interpreting the logs is the report's job.

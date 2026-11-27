@@ -10,5 +10,37 @@ Type=oneshot
 ExecStart=/usr/local/sbin/firmware-log-keeper
 Nice=10
 
+# The guard (checked by tests/guard_check.sh): the keeper can write only its three folders under /var/log and the
+# UEFI variables, where it deletes archived error records. Everything else, the EFI partition included, is read-only.
+ProtectSystem=strict
+LogsDirectory=firmware firmware_memory firmware_bootefilogs
+LogsDirectoryMode=0755
+ProtectKernelTunables=yes
+ReadWritePaths=/sys/firmware/efi/efivars
+ProtectHome=yes
+PrivateTmp=yes
+PrivateNetwork=yes
+# /dev/mem holds the firmware's memory log; no other device is reachable
+DevicePolicy=closed
+DeviceAllow=/dev/mem r
+# reading /dev/mem, and clearing the immutable flag the kernel puts on most UEFI variables
+CapabilityBoundingSet=CAP_SYS_RAWIO CAP_LINUX_IMMUTABLE
+NoNewPrivileges=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+RestrictAddressFamilies=AF_UNIX
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+
 [Install]
 WantedBy=multi-user.target
